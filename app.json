@@ -36,7 +36,7 @@
         "backgroundColor": "#7C5CBF"
       },
       "package": "com.weyuapp.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
@@ -53,6 +53,7 @@
       "expo-apple-authentication",
       "expo-localization",
       "expo-web-browser",
+      "expo-iap",
       [
         "react-native-google-mobile-ads",
         {
