@@ -3,7 +3,7 @@
     "name": "We育",
     "slug": "weyu",
     "scheme": "weyu",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "runtimeVersion": {
       "policy": "appVersion"
@@ -36,6 +36,7 @@
         "backgroundColor": "#7C5CBF"
       },
       "package": "com.weyuapp.app",
+      "versionCode": 2,
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
