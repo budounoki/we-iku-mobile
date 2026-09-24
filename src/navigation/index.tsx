@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 
 import { useAuthStore } from '../store/authStore';
 import WeTabBar from '../components/WeTabBar';
+import AdBanner from '../components/AdBanner';
 
 // Screens
 import HomeScreen from '../screens/HomeScreen';
@@ -31,6 +32,7 @@ import FAQScreen from '../screens/FAQScreen';
 import DailyStatsScreen from '../screens/DailyStatsScreen';
 import TipsScreen from '../screens/TipsScreen';
 import LegalScreen from '../screens/LegalScreen';
+import PremiumScreen from '../screens/PremiumScreen';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -53,6 +55,7 @@ export type RootStackParamList = {
   DailyStats: undefined;
   Tips: undefined;
   Legal: undefined;
+  Premium: undefined;
 };
 
 export type TabParamList = {
@@ -69,7 +72,13 @@ const Tab = createBottomTabNavigator<TabParamList>();
 function MainTabs() {
   return (
     <Tab.Navigator
-      tabBar={(props) => <WeTabBar {...props} />}
+      tabBar={(props) => (
+        <>
+          {/* 無料プランのみ表示（premium / free_forever は AdBanner 内で非表示） */}
+          <AdBanner />
+          <WeTabBar {...props} />
+        </>
+      )}
       screenOptions={{ headerShown: false }}
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ title: 'ホーム' }} />
@@ -171,6 +180,11 @@ export default function AppNavigator() {
               name="Legal"
               component={LegalScreen}
               options={{ headerShown: true, title: 'プライバシーポリシー・利用規約' }}
+            />
+            <Stack.Screen
+              name="Premium"
+              component={PremiumScreen}
+              options={{ headerShown: true, title: 'プレミアムプラン' }}
             />
             <Stack.Screen
               name="SkillTree"

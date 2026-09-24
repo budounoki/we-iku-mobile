@@ -98,6 +98,7 @@ import {
   Syringe,
 } from 'lucide-react-native';
 import DatePickerModal from '../components/DatePickerModal';
+import { usePlan } from '../hooks/usePlan';
 import {
   getVaccineNotifyEnabled,
   setVaccineNotifyEnabled,
@@ -211,6 +212,8 @@ export default function SettingsScreen() {
   const { mode: themeMode, setMode: setThemeMode } = useTheme();
 
   const familyId = user?.familyId ?? '';
+  // プレミアム導線の出し分け：free→購入導線 / premium→ご利用中 / free_forever→非表示
+  const { plan: familyPlan, isPremium: isPremiumFamily, isFreeForever: isFreeForeverFamily } = usePlan(familyId || null);
 
   // ── State ────────────────────────────────────────────────────────────────────
   const [showAddChild, setShowAddChild]   = useState(false);
@@ -1368,6 +1371,29 @@ export default function SettingsScreen() {
               ))}
             </View>
           </Card>
+
+          {/* ── プレミアムプラン ──
+              free: 購入導線 / premium: 状態確認・管理 / free_forever(モニター家族): 非表示。
+              プレミアム家族にはペイウォールを見せない（クライアント要件 2026-09）。 */}
+          {!isFreeForeverFamily && (
+            <TouchableOpacity
+              style={styles.linkCard}
+              onPress={() => (navigation as any).navigate('Premium')}
+            >
+              <View style={styles.iconCircle}>
+                <Star size={20} color="#F59E0B" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.linkTitle}>プレミアムプラン</Text>
+                <Muted style={styles.cardHeadSub}>
+                  {isPremiumFamily
+                    ? (familyPlan?.status === 'canceled' ? 'ご利用中（自動更新停止）' : 'ご利用中')
+                    : '広告なしで快適に'}
+                </Muted>
+              </View>
+              <ChevronRight size={16} color={palette.mutedForeground} />
+            </TouchableOpacity>
+          )}
 
           {/* ── 15. 使い方ヒント (web: /tips link → Tips.tsx) ──
               Routes to the dedicated TipsScreen (faithful port of
