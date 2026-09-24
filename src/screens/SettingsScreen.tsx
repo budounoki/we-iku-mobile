@@ -107,7 +107,7 @@ import {
 } from '../hooks/useVaccineReminderSync';
 import { useAuthStore } from '../store/authStore';
 import { useChildStore } from '../store/childStore';
-import { createChild } from '../api/children';
+import { createChild, updateChild } from '../api/children';
 import { joinFamily, deleteAccount as deleteAccountApi } from '../api/auth';
 import { apiRequest, apiPost } from '../api/client';
 import type { RootStackParamList } from '../navigation';
@@ -438,6 +438,27 @@ export default function SettingsScreen() {
     }
     const caregiver =
       userRole === 'mama' ? 'ママ' : userRole === 'other' ? 'その他' : 'パパ';
+    // ホーム/ヘッダーの表示名は activeChild.name を優先するため、既に子どもが
+    // いる場合は settings.babyName だけ更新しても画面に反映されない
+    // （client報告 2026-09-24：名前を保存しても変わらない）。プロフィール欄の
+    // 編集を「主役の子ども」の更新として扱い、名前・誕生日を子どもにも反映する。
+    const targetChild =
+      children.find((c) => c.id === activeChildId) ?? children[0] ?? null;
+    if (
+      targetChild &&
+      (babyName.trim() !== targetChild.name ||
+        (babyBirthday.trim() || '') !== ((targetChild as any).birthday || ''))
+    ) {
+      updateChild(targetChild.id, {
+        name: babyName.trim(),
+        ...(babyBirthday.trim() ? { birthday: babyBirthday.trim() } : {}),
+      })
+        .then((updated) => {
+          setChildren(children.map((c) => (c.id === updated.id ? updated : c)));
+          queryClient.invalidateQueries({ queryKey: ['children'] });
+        })
+        .catch(() => {});
+    }
     updateSettingsMutation.mutate({
       familyId: familyId,
       babyName: babyName.trim(),
