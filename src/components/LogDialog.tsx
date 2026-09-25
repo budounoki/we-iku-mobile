@@ -430,13 +430,20 @@ export default function LogDialog({
   // ── 時間を変更 (datetime affordance) ─────────────────────────────────────────
   const [showTimeEdit, setShowTimeEdit] = useState(false);
   const [logTime, setLogTime] = useState(''); // HH:MM
+  // Record DATE for the general log (YYYY-MM-DD). Defaults to today; the date
+  // picker in renderTimeEdit lets users backdate past entries — previously the
+  // "時間を変更" affordance only changed the time and always used today, so
+  // past records couldn't be entered (client report 2026-09-25).
+  const [logDate, setLogDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [showLogDatePicker, setShowLogDatePicker] = useState(false);
   const createdAtIso = (): string | undefined => {
     if (!logTime || logTime.length < 4) return undefined;
     const m = /^(\d{1,2}):(\d{2})$/.exec(logTime.trim());
     if (!m) return undefined;
     const h = Math.min(23, parseInt(m[1], 10));
     const min = Math.min(59, parseInt(m[2], 10));
-    const d = new Date();
+    const d = new Date(`${logDate}T00:00:00`);
+    if (isNaN(d.getTime())) return undefined;
     d.setHours(h, min, 0, 0);
     return d.toISOString();
   };
@@ -1038,11 +1045,24 @@ export default function LogDialog({
   const renderTimeEdit = () => {
     const now = new Date();
     const display = logTime || `${now.getHours()}:${pad2(now.getMinutes())}`;
+    const dObj = new Date(`${logDate}T00:00:00`);
+    const dValid = !isNaN(dObj.getTime());
+    const isToday = logDate === new Date().toISOString().split('T')[0];
+    const dateLabel = dValid
+      ? `${dObj.getFullYear()}年${dObj.getMonth() + 1}月${dObj.getDate()}日`
+      : '日付を選ぶ';
     return (
       <View style={{ marginTop: 4 }}>
         {showTimeEdit ? (
           <View>
-            <Text style={s.sectionLabel}>記録時刻</Text>
+            {/* 日付：過去の記録を入力できるよう日付も選べる（client報告 2026-09-25）。 */}
+            <Text style={s.sectionLabel}>日付</Text>
+            <TouchableOpacity style={s.timeChip} onPress={() => setShowLogDatePicker(true)}>
+              <Clock size={13} color={GRAY_400} strokeWidth={2.5} />
+              <Text style={s.timeChipText}>{dateLabel}{isToday ? '（今日）' : ''}</Text>
+              <Text style={s.timeChipHint}>日付を変更</Text>
+            </TouchableOpacity>
+            <Text style={[s.sectionLabel, { marginTop: 8 }]}>記録時刻</Text>
             {/* Wheel picker replaces the typed HH:MM input (client feedback
                 2026-09-09 — web parity: select, don't type). */}
             <ScrollTimePicker value={logTime || nowHHMM()} onChange={setLogTime} />
@@ -1051,7 +1071,7 @@ export default function LogDialog({
           <TouchableOpacity style={s.timeChip} onPress={() => { if (!logTime) setLogTime(nowHHMM()); setShowTimeEdit(true); }}>
             <Clock size={13} color={GRAY_400} strokeWidth={2.5} />
             <Text style={s.timeChipText}>{display}</Text>
-            <Text style={s.timeChipHint}>時間を変更</Text>
+            <Text style={s.timeChipHint}>日時を変更</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -2367,6 +2387,15 @@ export default function LogDialog({
         onConfirm={(iso) => setManualDate(iso)}
         onClose={() => setShowManualDatePicker(false)}
         title="ねんねの日付を選ぶ"
+      />
+
+      <DatePickerModal
+        visible={showLogDatePicker}
+        initialDate={logDate}
+        maxDate={new Date()}
+        onConfirm={(iso) => setLogDate(iso)}
+        onClose={() => setShowLogDatePicker(false)}
+        title="記録の日付を選ぶ"
       />
     </Modal>
   );
