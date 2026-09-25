@@ -719,7 +719,11 @@ export default function HomeScreen() {
   const createLogMutation = useMutation({
     mutationFn: createLog,
     onSuccess: (newLog) => {
-      queryClient.invalidateQueries({ queryKey: ['logs', familyId] });
+      // Append to the cache instead of invalidating — invalidate refetched the
+      // family's entire log list (~4MB for heavy families), making every save
+      // feel slow (client report 2026-09-25). The created log carries all its
+      // fields, so appending keeps the UI correct without a refetch.
+      queryClient.setQueryData<any[]>(['logs', familyId], (old) => (old ? [...old, newLog] : [newLog]));
       if (FEEDING_TYPES.has(newLog.type)) {
         scheduleNextFeedingAlarm(new Date(newLog.createdAt)).catch(() => {});
       }

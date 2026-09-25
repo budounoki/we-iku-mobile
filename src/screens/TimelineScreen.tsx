@@ -562,8 +562,10 @@ function EditLogDialog({ log, onClose, onSaved }: EditLogDialogProps) {
 
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<Log> }) => updateLog(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['logs', familyId] });
+    onSuccess: (updated, { id }) => {
+      // Patch the single log in cache instead of refetching the whole list.
+      queryClient.setQueryData<any[]>(['logs', familyId], (old) =>
+        old ? old.map((l) => (l.id === id ? { ...l, ...updated } : l)) : old);
       onSaved();
     },
     onError: () => showAlert('保存に失敗しました。'),
@@ -571,8 +573,9 @@ function EditLogDialog({ log, onClose, onSaved }: EditLogDialogProps) {
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteLog(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['logs', familyId] });
+    onSuccess: (_res, id) => {
+      queryClient.setQueryData<any[]>(['logs', familyId], (old) =>
+        old ? old.filter((l) => l.id !== id) : old);
       onSaved();
     },
     onError: () => showAlert('削除に失敗しました。'),
@@ -1226,7 +1229,8 @@ export default function TimelineScreen() {
   const createLogMutation = useMutation({
     mutationFn: createLog,
     onSuccess: (newLog) => {
-      queryClient.invalidateQueries({ queryKey: ['logs', familyId] });
+      // Cache-append instead of a full 4MB refetch (see HomeScreen note).
+      queryClient.setQueryData<any[]>(['logs', familyId], (old) => (old ? [...old, newLog] : [newLog]));
       toast.show(logRecordedToast(newLog.type, newLog.points ?? 10));
     },
     onError: () => showAlert('記録の保存に失敗しました。'),
@@ -1373,9 +1377,11 @@ export default function TimelineScreen() {
   const updateLogTimeMut = useMutation({
     mutationFn: ({ id, createdAt }: { id: number; createdAt: string }) =>
       apiPost(`/api/logs/${id}/update-time`, { createdAt }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['logs', familyId] });
-      queryClient.invalidateQueries({ queryKey: ['logs'] });
+    onSuccess: (_res, { id, createdAt }) => {
+      // Patch createdAt in cache instead of refetching all logs (drag-to-retime
+      // used to reload ~4MB each time).
+      queryClient.setQueryData<any[]>(['logs', familyId], (old) =>
+        old ? old.map((l) => (l.id === id ? { ...l, createdAt } : l)) : old);
     },
     onError: () => {
       Alert.alert('時刻の変更に失敗しました', 'ネットワーク接続をご確認ください。');
@@ -1699,13 +1705,18 @@ export default function TimelineScreen() {
       />
 
       {/* ── Analytics panel ──────────────────────────────────────────────── */}
-      <AnalyticsPanel
-        logs={logs}
-        visible={showAnalytics}
-        onClose={() => setShowAnalytics(false)}
-        excludedDates={excludedDates}
-        onToggleExclude={handleToggleExclude}
-      />
+      {/* Mount only when open — its 14 full-list scans over all logs used to
+          run on EVERY Timeline render (even closed), making きろく slow for
+          families with thousands of logs (client report 2026-09-25). */}
+      {showAnalytics && (
+        <AnalyticsPanel
+          logs={logs}
+          visible={showAnalytics}
+          onClose={() => setShowAnalytics(false)}
+          excludedDates={excludedDates}
+          onToggleExclude={handleToggleExclude}
+        />
+      )}
 
       {/* ── Quick Add FAB (web: fixed bottom-20 right-4 w-14 h-14 #805AAA) ── */}
       <TouchableOpacity
