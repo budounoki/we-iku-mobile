@@ -438,23 +438,40 @@ export default function SettingsScreen() {
     }
     const caregiver =
       userRole === 'mama' ? 'ママ' : userRole === 'other' ? 'その他' : 'パパ';
-    // ホーム/ヘッダーの表示名は activeChild.name を優先するため、既に子どもが
-    // いる場合は settings.babyName だけ更新しても画面に反映されない
-    // （client報告 2026-09-24：名前を保存しても変わらない）。プロフィール欄の
-    // 編集を「主役の子ども」の更新として扱い、名前・誕生日を子どもにも反映する。
+    // ホーム/ヘッダーやログ記録は「お子さま(children)」を主役として扱う。
+    // Google/Apple/LINEログインはオンボーディングを経由せずホームに入るため、
+    // 新規ユーザーは子どもが未作成のまま。その状態だと名前が反映されず、
+    // ログ記録時に「子どもを選択してください」となる（client報告 2026-09-25）。
+    // プロフィール欄の保存を、子どもの作成／更新として扱う。
     const targetChild =
       children.find((c) => c.id === activeChildId) ?? children[0] ?? null;
-    if (
-      targetChild &&
-      (babyName.trim() !== targetChild.name ||
-        (babyBirthday.trim() || '') !== ((targetChild as any).birthday || ''))
-    ) {
-      updateChild(targetChild.id, {
+    if (targetChild) {
+      // 既存の子どもがいる場合は名前・誕生日を反映（client報告 2026-09-24）。
+      if (
+        babyName.trim() !== targetChild.name ||
+        (babyBirthday.trim() || '') !== ((targetChild as any).birthday || '')
+      ) {
+        updateChild(targetChild.id, {
+          name: babyName.trim(),
+          ...(babyBirthday.trim() ? { birthday: babyBirthday.trim() } : {}),
+        })
+          .then((updated) => {
+            setChildren(children.map((c) => (c.id === updated.id ? updated : c)));
+            queryClient.invalidateQueries({ queryKey: ['children'] });
+          })
+          .catch(() => {});
+      }
+    } else if (user?.familyId) {
+      // 子どもが未作成なら作成し、アクティブに設定する（Webの自動作成と同等）。
+      createChild({
         name: babyName.trim(),
-        ...(babyBirthday.trim() ? { birthday: babyBirthday.trim() } : {}),
+        birthday: babyBirthday.trim() || undefined,
+        familyId: user.familyId as any,
+        color: '#805AAA',
       })
-        .then((updated) => {
-          setChildren(children.map((c) => (c.id === updated.id ? updated : c)));
+        .then((newChild) => {
+          setChildren([...children, newChild]);
+          setActiveChildId(newChild.id);
           queryClient.invalidateQueries({ queryKey: ['children'] });
         })
         .catch(() => {});
