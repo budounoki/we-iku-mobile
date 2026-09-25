@@ -99,6 +99,16 @@ import {
 } from 'lucide-react-native';
 import DatePickerModal from '../components/DatePickerModal';
 import { usePlan } from '../hooks/usePlan';
+import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
+
+// Version footer shows the real app version + which OTA update is applied, so
+// the client's build (v1.0.0) and the premium test build (v1.1.0) — and which
+// over-the-air update each is running — can be verified at a glance.
+const APP_VERSION = Constants.expoConfig?.version ?? '?';
+const OTA_LABEL = Updates.isEmbeddedLaunch
+  ? '内蔵'
+  : (Updates.updateId ? Updates.updateId.slice(0, 8) : '不明');
 import {
   getVaccineNotifyEnabled,
   setVaccineNotifyEnabled,
@@ -1485,7 +1495,7 @@ export default function SettingsScreen() {
 
       {/* ── 18. version footer (web: text-center pt-4 pb-8) ── */}
       <View style={styles.versionWrap}>
-        <Text style={styles.versionMain}>We育 Beta v1.0</Text>
+        <Text style={styles.versionMain}>We育 v{APP_VERSION}（更新: {OTA_LABEL}）</Text>
         <Muted style={styles.versionSub}>by 産前産後ケアホテル ぶどうの木</Muted>
       </View>
 
