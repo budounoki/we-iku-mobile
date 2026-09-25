@@ -117,14 +117,45 @@ export default function LoginScreen() {
     syncSharedData(user.displayName);
   };
 
+  // Parse the weyu://auth/callback?token=…&familyId=… URL returned by the auth
+  // session and complete the login. Used by the Google/LINE flows below.
+  const finishAuthFromCallbackUrl = async (callbackUrl: string): Promise<boolean> => {
+    const qs = callbackUrl.split('?')[1];
+    if (!qs) return false;
+    const params: Record<string, string> = {};
+    for (const pair of qs.split('&')) {
+      const [k, v] = pair.split('=');
+      if (k) params[k] = decodeURIComponent(v ?? '');
+    }
+    const { token, familyId, role, displayName, pictureUrl, userId, invitationVerified } = params;
+    if (!token || !familyId) return false;
+    await saveAndLogin(token, {
+      id: parseInt(userId ?? '0', 10),
+      familyId,
+      role: (role as 'papa' | 'mama') ?? 'papa',
+      displayName: displayName ?? '',
+      pictureUrl: pictureUrl ?? '',
+      invitationVerified: invitationVerified === 'true',
+    });
+    return true;
+  };
+
   // ── LINE ───────────────────────────────────────────────────────────────────
   const handleLineLogin = async () => {
     setLineLoading(true);
     try {
       const url = getLineLoginUrl(getBaseUrl());
-      // Open in browser; the backend redirects to weyu://auth/callback,
-      // which App.tsx intercepts and finishes the login.
-      await WebBrowser.openBrowserAsync(url);
+      // iOS: openAuthSessionAsync (ASWebAuthenticationSession) returns to the
+      // app on the weyu://auth/callback redirect. openBrowserAsync
+      // (SFSafariViewController) does NOT on iOS → login appeared stuck
+      // (client報告 2026-09-25「次の画面に進まない」). Android's Custom Tabs
+      // return fine via App.tsx's deep-link listener, so keep that path.
+      if (Platform.OS === 'ios') {
+        const result = await WebBrowser.openAuthSessionAsync(url, 'weyu://auth/callback');
+        if (result.type === 'success' && result.url) await finishAuthFromCallbackUrl(result.url);
+      } else {
+        await WebBrowser.openBrowserAsync(url);
+      }
     } catch {
       Alert.alert('エラー', 'LINEログインを開けませんでした。');
     } finally {
@@ -162,9 +193,17 @@ export default function LoginScreen() {
     // On native, use server-side redirect flow (same as LINE login).
     // expo-auth-session's browser flow generates redirect URIs like
     // exp://ip:port that can't be registered in Google Console.
+    // iOS: openAuthSessionAsync so it returns to the app on weyu://auth/callback
+    // (SFSafariViewController via openBrowserAsync did not — client報告 2026-09-25).
+    // Android keeps openBrowserAsync (works via App.tsx deep-link listener).
     try {
       const url = `${getBaseUrl()}/api/auth/google/native`;
-      await WebBrowser.openBrowserAsync(url);
+      if (Platform.OS === 'ios') {
+        const result = await WebBrowser.openAuthSessionAsync(url, 'weyu://auth/callback');
+        if (result.type === 'success' && result.url) await finishAuthFromCallbackUrl(result.url);
+      } else {
+        await WebBrowser.openBrowserAsync(url);
+      }
     } catch {
       Alert.alert('エラー', 'Googleログインを開けませんでした。');
     } finally {
