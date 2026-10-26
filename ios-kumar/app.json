@@ -1,0 +1,74 @@
+{
+  "expo": {
+    "name": "We育",
+    "slug": "weyu",
+    "scheme": "weyu",
+    "version": "3.1",
+    "orientation": "portrait",
+    "platforms": [
+      "ios"
+    ],
+    "runtimeVersion": "2.1.0",
+    "updates": {
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/004b547b-89ae-4b3e-a077-576ac998d4ea"
+    },
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#7C5CBF"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.weyuapp3.app",
+      "buildNumber": "37",
+      "infoPlist": {
+        "NSCameraUsageDescription": "写真の記録に使用します",
+        "NSPhotoLibraryUsageDescription": "写真の選択に使用します",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundColor": "#7C5CBF"
+      },
+      "package": "com.weyuapp.app",
+      "versionCode": 3,
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-notifications",
+      "expo-secure-store",
+      "expo-apple-authentication",
+      "expo-localization",
+      "expo-web-browser",
+      "expo-iap",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-4413290155368727~1921694519",
+          "iosAppId": "ca-app-pub-4413290155368727~2106009844"
+        }
+      ],
+      "expo-sharing"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "004b547b-89ae-4b3e-a077-576ac998d4ea"
+      }
+    },
+    "owner": "kumar8080"
+  }
+}

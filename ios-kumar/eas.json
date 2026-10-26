@@ -1,0 +1,37 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview"
+    },
+    "testflight": {
+      "distribution": "store",
+      "channel": "testflight"
+    },
+    "production": {
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_ADMOB_BANNER_IOS": "ca-app-pub-4413290155368727/3978804222",
+        "EXPO_PUBLIC_ADMOB_BANNER_ANDROID": "ca-app-pub-4413290155368727/5100314208",
+        "EXPO_PUBLIC_API_URL": "https://we-iku.app",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "950081202319-jtraojb75dit6t7oiia7k97232at9ggv.apps.googleusercontent.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "ascAppId": "6769981853"
+      }
+    }
+  }
+}
