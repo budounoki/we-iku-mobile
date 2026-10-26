@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, View, Text, TouchableOpacity } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '../store/authStore';
 import { usePlan } from '../hooks/usePlan';
 
@@ -53,23 +54,44 @@ export default function AdBanner() {
   const user = useAuthStore((s) => s.user);
   const { adFree } = usePlan(user?.familyId ?? null);
   const [failed, setFailed] = useState(false);
+  const navigation = useNavigation<any>();
 
   useEffect(() => {
     if (!adFree) initMobileAds();
   }, [adFree]);
 
-  if (adFree || failed || !BannerAd || !user) return null;
+  // premium / free_forever（モニター家族）/ プラン判定中 / 未ログインは何も出さない。
+  if (adFree || !user) return null;
+
   const unitId = bannerUnitId();
-  if (!unitId) return null;
+  // バナーは読み込み成功時のみ表示（失敗・ライブラリ未リンク・ID未設定時は枠を出さない）。
+  const showBanner = !failed && !!BannerAd && !!unitId;
 
   return (
     <View style={{ alignItems: 'center', backgroundColor: 'transparent' }}>
-      <BannerAd
-        unitId={unitId}
-        size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
-        requestOptions={{ requestNonPersonalizedAdsOnly: true }}
-        onAdFailedToLoad={() => setFailed(true)}
-      />
+      {showBanner && (
+        <BannerAd
+          unitId={unitId!}
+          size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+          requestOptions={{ requestNonPersonalizedAdsOnly: true }}
+          onAdFailedToLoad={() => setFailed(true)}
+        />
+      )}
+      {/* バナー直下の「広告を消す」導線。広告枠の外側・中央寄せ・小さめグレー
+          文字（下線付き）で、広告の閉じるボタンとは誤認されない見た目にする。
+          無料プラン家族にプレミアムへの入口を常に提示する（クライアント要望
+          2026-10：設定内だけだと誰もプレミアムに気づかない恐れがあるため）。 */}
+      <TouchableOpacity
+        onPress={() => navigation.navigate('Premium')}
+        hitSlop={{ top: 6, bottom: 6, left: 16, right: 16 }}
+        style={{ paddingVertical: 4, paddingHorizontal: 12, cursor: 'pointer' }}
+      >
+        {/* 以前は #9CA3AF で背景と同系色になり見えづらかった（client 2026-10）。
+            ブランド紫＋下線＋やや太字で、タップできる導線として読みやすくする。 */}
+        <Text style={{ fontSize: 12, color: '#7C3AED', fontWeight: '600', textDecorationLine: 'underline' }}>
+          広告を消す
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }

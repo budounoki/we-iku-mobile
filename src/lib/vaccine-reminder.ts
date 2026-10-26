@@ -1,5 +1,9 @@
 import { addMonths, differenceInCalendarDays } from 'date-fns';
-import { JP_VACCINES, isVaccineGroupDone, type JpVaccine, type JpVaccineDose } from './vaccine-schedule';
+import {
+  VACCINE_DEFINITIONS,
+  normalizeVaccineId,
+  type VaccineDefinition,
+} from './vaccine-schedule';
 
 export type VaccineReminderStage = 'pre' | 'due' | 'overdue';
 
@@ -11,23 +15,22 @@ export interface VaccineReminder {
   message: string;
 }
 
-function buildMessage(vaccine: JpVaccine, dose: JpVaccineDose, stage: VaccineReminderStage): string {
-  const label = `${vaccine.name}(${dose.label})`;
+function buildMessage(vaccine: VaccineDefinition, stage: VaccineReminderStage): string {
+  const label = vaccine.name;
   if (stage === 'pre') return `もうすぐ${label}の接種時期です`;
   if (stage === 'due') return `${label}が接種時期です`;
   return `${label}の接種時期を過ぎています。かかりつけ医にご相談ください`;
 }
 
 /**
- * リマインド対象ワクチンを算出する。HealthScreenの「次の予防接種」判定と
- * 同じ基準(dose.ageMin〜ageMax の月齢レンジ、vaccineId.includes(vaccine.name)
- * によるワクチングループ単位の接種済み判定)を用いる。
- * - 接種済みグループは対象外
- * - 段階判定:
- *   due:     今の月齢が dose.ageMin〜ageMax の範囲内
- *   overdue: 今の月齢が dose.ageMax を超過
- *   pre:     dose.ageMin到達日(誕生日+ageMinヶ月)が leadDays 以内に迫っている
- * - 1ワクチングループにつき最も早い(直近の)回のみ通知する
+ * リマインド対象ワクチンを算出する。web とアプリ共通の新カタログ
+ * （@shared/vaccine-schedule の VACCINE_DEFINITIONS。回次ごとに standardAgeMonths を持つ）
+ * を用いる。接種済み判定は normalizeVaccineId で旧形式の記録も拾う。
+ * - グループ（五種混合 等）ごとに「次に打つべき最も早い未接種の回」を1件だけ通知する
+ * - 段階判定（標準接種月齢 standardAgeMonths 基準）:
+ *   due:     標準接種日（誕生日+standardヶ月）を過ぎている
+ *   overdue: 標準+3ヶ月を過ぎている
+ *   pre:     標準接種日が leadDays 以内に迫っている
  */
 export function computeVaccineReminders(params: {
   birthday: string;
@@ -39,32 +42,39 @@ export function computeVaccineReminders(params: {
   if (!birthday) return [];
   const today = params.today ?? new Date();
   const birth = new Date(birthday);
+  const completedIds = new Set(vaccineRecords.map((r) => normalizeVaccineId(r.vaccineId)));
+
+  // グループごとに回次順で並べ、次に打つべき未接種の回を選ぶ。
+  const byGroup = new Map<string, VaccineDefinition[]>();
+  for (const v of VACCINE_DEFINITIONS) {
+    if (v.isOptional) continue; // 任意接種はリマインド対象外
+    if (!byGroup.has(v.group)) byGroup.set(v.group, []);
+    byGroup.get(v.group)!.push(v);
+  }
 
   const reminders: VaccineReminder[] = [];
-  for (const vaccine of JP_VACCINES) {
-    if (isVaccineGroupDone(vaccine, vaccineRecords)) continue;
+  for (const doses of byGroup.values()) {
+    const sorted = [...doses].sort((a, b) => a.doseNumber - b.doseNumber);
+    const nextDose = sorted.find((d) => !completedIds.has(d.id));
+    if (!nextDose) continue; // 全回次 接種済み
 
-    // 最も早い(次に打つべき)回のみを対象にする
-    const dose = vaccine.doses[0];
-    if (!dose) continue;
-
-    const targetDate = addMonths(birth, dose.ageMin);
+    const targetDate = addMonths(birth, nextDose.standardAgeMonths);
+    const overdueDate = addMonths(birth, nextDose.standardAgeMonths + 3);
     const daysUntil = differenceInCalendarDays(targetDate, today);
-    const maxDate = addMonths(birth, dose.ageMax);
-    const daysPastMax = differenceInCalendarDays(today, maxDate);
+    const daysPastOverdue = differenceInCalendarDays(today, overdueDate);
 
     let stage: VaccineReminderStage | null = null;
-    if (daysPastMax > 0) stage = 'overdue';
+    if (daysPastOverdue > 0) stage = 'overdue';
     else if (daysUntil <= 0) stage = 'due';
     else if (daysUntil <= leadDays) stage = 'pre';
 
     if (!stage) continue;
     reminders.push({
-      vaccineId: vaccine.id,
-      vaccineName: vaccine.name,
+      vaccineId: nextDose.id,
+      vaccineName: nextDose.name,
       stage,
       targetDate: targetDate.toISOString().slice(0, 10),
-      message: buildMessage(vaccine, dose, stage),
+      message: buildMessage(nextDose, stage),
     });
   }
   return reminders;

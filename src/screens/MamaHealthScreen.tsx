@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useRoute } from '@react-navigation/native';
 import {
   View,
   StyleSheet,
@@ -22,30 +23,35 @@ import type { MamaHealthRecord, MamaMedicineRecord } from '@shared/schema';
 import { palette, fonts, radius, shadows } from '../theme/tokens';
 import { Card, Button, Text, Title, Muted } from '../theme/ui';
 import { useTheme } from '../contexts/ThemeContext';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
+// web と同じ選択肢に統一（client 2026-10: ママのからだ記録を web と同じに）。
 const LOCHIA_OPTIONS: { value: string; label: string }[] = [
-  { value: 'none', label: 'なし' },
-  { value: 'light', label: '少量' },
-  { value: 'medium', label: '中程度' },
   { value: 'heavy', label: '多め' },
+  { value: 'normal', label: '普通' },
+  { value: 'light', label: '少なめ' },
+  { value: 'none', label: 'なし' },
 ];
+// 旧データ互換（以前は medium=中程度 だった）。表示/選択で normal として扱う。
+const LOCHIA_LABELS: Record<string, string> = { heavy: '多め', normal: '普通', medium: '普通', light: '少なめ', none: 'なし' };
 
 const PAIN_LABELS = ['なし', '弱', '中', '強', '激'];
 
 // Mood scale rendered with lucide face icons (matches the web app's icon style)
 const MOOD_ICONS = [Frown, Annoyed, Meh, Smile, Laugh];
+const MOOD_LABELS = ['辛い', '少し辛い', '普通', 'まあまあ', '良好'];
 
 const SLEEP_MINUTES_OPTIONS = [0, 15, 30, 45];
 
+// web と同じ授乳トラブルの選択肢。
 const BREASTFEEDING_TROUBLES = [
   '乳首の痛み',
-  '乳腺炎',
+  '張り',
   '詰まり',
   '白斑',
-  '陥没乳頭',
-  'その他',
+  '乳腺炎の疑い',
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -60,6 +66,41 @@ function toDateString(d: Date): string {
 function formatDisplayDate(dateStr: string): string {
   const [y, m, d] = dateStr.split('-');
   return `${y}年${parseInt(m)}月${parseInt(d)}日`;
+}
+
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+function formatHistDate(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  return `${d.getMonth() + 1}月${d.getDate()}日（${WEEKDAYS[d.getDay()]}）`;
+}
+
+// お薬の履歴用: 日時（M月d日 HH:mm）。
+function formatMedDateTime(value: string | Date | null | undefined): string {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${hh}:${mm}`;
+}
+
+// web と同じ色のチップ（過去の記録の表示用）。
+const CHIP_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  pink: { bg: '#FDF2F8', border: '#FBCFE8', text: '#BE185D' },
+  rose: { bg: '#FFF1F2', border: '#FECDD3', text: '#BE123C' },
+  violet: { bg: '#F5F3FF', border: '#DDD6FE', text: '#6D28D9' },
+  blue: { bg: '#EFF6FF', border: '#BFDBFE', text: '#1D4ED8' },
+  green: { bg: '#F0FDF4', border: '#BBF7D0', text: '#15803D' },
+  amber: { bg: '#FFFBEB', border: '#FDE68A', text: '#B45309' },
+};
+
+function MamaChip({ color, label }: { color: keyof typeof CHIP_COLORS; label: string }) {
+  const c = CHIP_COLORS[color];
+  return (
+    <View style={{ backgroundColor: c.bg, borderColor: c.border, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+      <Text style={{ fontSize: 11, fontFamily: fonts.bodyBold, color: c.text }}>{label}</Text>
+    </View>
+  );
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────
@@ -106,8 +147,20 @@ function ToggleRow({
 
 export default function MamaHealthScreen() {
   const { isDark, colors } = useTheme();
+  const route = useRoute();
+  const scrollRef = useRef<ScrollView>(null);
+  const [medicineCardY, setMedicineCardY] = useState(0);
+  // 「ママの薬を記録する」から来たときは、お薬セクションまで自動でスクロールする
+  // （client 2026-10: お薬の履歴/記録が下にあって見つけにくい）。
+  useEffect(() => {
+    if ((route.params as any)?.focus === 'medicine' && medicineCardY > 0) {
+      const t = setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, medicineCardY - 12), animated: true }), 300);
+      return () => clearTimeout(t);
+    }
+  }, [route.params, medicineCardY]);
   const { user } = useAuthStore();
   const queryClient = useQueryClient();
+  const kbHeight = useKeyboardHeight();
   const today = toDateString(new Date());
 
   // ── Date state ──────────────────────────────────────────────────────────
@@ -133,9 +186,11 @@ export default function MamaHealthScreen() {
   const [weightKg, setWeightKg] = useState('');
   const [hasEdema, setHasEdema] = useState<boolean | null>(null);
   const [holdingTime, setHoldingTime] = useState('');
+  const [showMamaHistory, setShowMamaHistory] = useState(false);
 
   // ── Medicine modal state ─────────────────────────────────────────────────
   const [medicineModalVisible, setMedicineModalVisible] = useState(false);
+  const [showMedHistory, setShowMedHistory] = useState(false);
   const [medicineName, setMedicineName] = useState('');
   const [medicineDosage, setMedicineDosage] = useState('');
   const [medicineMemo, setMedicineMemo] = useState('');
@@ -146,6 +201,37 @@ export default function MamaHealthScreen() {
     queryFn: () => apiGet<MamaMedicineRecord[]>(`/api/mama-medicine/${user!.familyId}`),
     enabled: !!user?.familyId,
   });
+
+  // 保存済みのからだ記録。以前はこのクエリ自体が無く、保存しても読み戻されず
+  // 画面には常に初期値しか出ていなかった（client 2026-10: ママの体の記録が反映されない）。
+  const { data: healthRecords = [] } = useQuery<MamaHealthRecord[]>({
+    queryKey: ['mama-health', user?.familyId],
+    queryFn: () => apiGet<MamaHealthRecord[]>(`/api/mama-health/${user!.familyId}`),
+    enabled: !!user?.familyId,
+  });
+
+  // 選択中の日付の記録でフォームを復元（無ければ初期値に戻す）。保存後は invalidate →
+  // 再取得 → ここで最新値に同期される。
+  useEffect(() => {
+    const rec = healthRecords.find((r) => r.recordedDate === selectedDate);
+    if (rec) {
+      setBowelMovement(rec.bowelMovement ?? null);
+      setBowelNote(rec.bowelNote ?? '');
+      setLochiaState(rec.lochiaState === 'medium' ? 'normal' : (rec.lochiaState ?? null));
+      setPerineumPain(rec.perineumPain ?? null);
+      setMood(rec.mood ?? null);
+      setSleepHours(rec.sleepHours ?? 6);
+      setSleepMinutes(rec.sleepMinutes ?? 0);
+      setSelectedTroubles(rec.breastfeedingTrouble ? rec.breastfeedingTrouble.split(',').filter(Boolean) : []);
+      setWeightKg(rec.weightKg ?? '');
+      setHasEdema(rec.hasEdema ?? null);
+      setHoldingTime(rec.holdingTime != null ? String(rec.holdingTime) : '');
+    } else {
+      setBowelMovement(null); setBowelNote(''); setLochiaState(null);
+      setPerineumPain(null); setMood(null); setSleepHours(6); setSleepMinutes(0);
+      setSelectedTroubles([]); setWeightKg(''); setHasEdema(null); setHoldingTime('');
+    }
+  }, [selectedDate, healthRecords]);
 
   // ── Mutations ────────────────────────────────────────────────────────────
   const saveHealthMutation = useMutation({
@@ -218,6 +304,23 @@ export default function MamaHealthScreen() {
     });
   }
 
+  // 過去の記録（新しい日付順）。web の「過去の記録」一覧と同じ表示に使う。
+  const sortedMamaRecords = [...healthRecords].sort((a, b) =>
+    a.recordedDate < b.recordedDate ? 1 : a.recordedDate > b.recordedDate ? -1 : 0,
+  );
+
+  // お薬の記録は「あなただけに表示される」ので、ログイン中ユーザー本人の記録だけに絞る
+  // （web の owner-privacy と同じ考え方。client 2026-10）。
+  const myMedicineUserId = user ? (user.lineUserId || String(user.id)) : '';
+  const myMedicines = medicines.filter((m) => (m.userId ?? '') === myMedicineUserId);
+
+  // お薬の履歴（新しい順）。web の「お薬の履歴を見る」と同じ表示に使う。
+  const sortedMedicines = [...myMedicines].sort((a, b) => {
+    const ta = new Date((a.takenAt ?? a.createdAt) as any).getTime() || 0;
+    const tb = new Date((b.takenAt ?? b.createdAt) as any).getTime() || 0;
+    return tb - ta;
+  });
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <View style={[styles.container, isDark && { backgroundColor: colors.background }]}>
@@ -246,10 +349,55 @@ export default function MamaHealthScreen() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
+        {/* 過去の記録（web と同じ。日付ごとにチップでまとめて表示・編集へ） */}
+        {sortedMamaRecords.length > 0 && (
+          <Card style={styles.card}>
+            <TouchableOpacity
+              style={styles.histToggle}
+              onPress={() => setShowMamaHistory((v) => !v)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.histToggleTitle}>過去の記録 ({sortedMamaRecords.length}件)</Text>
+              <Text style={styles.histToggleAction}>{showMamaHistory ? '▲ 閉じる' : '▼ 見る'}</Text>
+            </TouchableOpacity>
+
+            {showMamaHistory && sortedMamaRecords.map((rec) => {
+              const isToday = rec.recordedDate === today;
+              const troubles = rec.breastfeedingTrouble ? rec.breastfeedingTrouble.split(',').filter(Boolean) : [];
+              return (
+                <View key={rec.id} style={styles.histRow}>
+                  <View style={styles.histHeadRow}>
+                    <View style={styles.histDateWrap}>
+                      <Text style={styles.histDate}>{formatHistDate(rec.recordedDate)}</Text>
+                      {isToday && <View style={styles.histTodayBadge}><Text style={styles.histTodayText}>今日</Text></View>}
+                    </View>
+                    <TouchableOpacity onPress={() => { setSelectedDate(rec.recordedDate); setShowMamaHistory(false); }} activeOpacity={0.7}>
+                      <Text style={styles.histEdit}>編集</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.histChipWrap}>
+                    {rec.bowelMovement != null && <MamaChip color="pink" label={`お通じ ${rec.bowelMovement ? 'あり' : 'なし'}`} />}
+                    {rec.lochiaState && <MamaChip color="pink" label={`悪露 ${LOCHIA_LABELS[rec.lochiaState] || rec.lochiaState}`} />}
+                    {rec.perineumPain != null && <MamaChip color="rose" label={`痛み ${rec.perineumPain}/4`} />}
+                    {rec.mood != null && <MamaChip color="violet" label={`気分 ${MOOD_LABELS[rec.mood] ?? ''}`} />}
+                    {(rec.sleepHours != null || rec.sleepMinutes != null) && (
+                      <MamaChip color="blue" label={`睡眠 ${rec.sleepHours ?? 0}h${rec.sleepMinutes ? `${rec.sleepMinutes}m` : ''}`} />
+                    )}
+                    {!!rec.weightKg && <MamaChip color="green" label={`${rec.weightKg}kg${rec.hasEdema != null ? (rec.hasEdema ? ' むくみ○' : ' むくみ×') : ''}`} />}
+                    {troubles.length > 0 && <MamaChip color="amber" label={`授乳: ${troubles.join('・')}`} />}
+                  </View>
+                  {(rec.bowelNote) && <Text style={styles.histNote}>{rec.bowelNote}</Text>}
+                </View>
+              );
+            })}
+          </Card>
+        )}
+
         {/* Section 1: お通じ */}
         <SectionCard title="お通じ">
           <ToggleRow value={bowelMovement} onChange={setBowelMovement} />
@@ -420,7 +568,7 @@ export default function MamaHealthScreen() {
         </SectionCard>
 
         {/* Medicine Card */}
-        <Card style={styles.card}>
+        <Card style={styles.card} onLayout={(e) => setMedicineCardY(e.nativeEvent.layout.y)}>
           <View style={styles.medicineTitleRow}>
             <Pill size={18} color={palette.primary} />
             <Title style={styles.sectionTitle}>自分のお薬を記録</Title>
@@ -428,10 +576,10 @@ export default function MamaHealthScreen() {
 
           {medicinesLoading ? (
             <ActivityIndicator color={palette.primary} style={{ marginVertical: 8 }} />
-          ) : medicines.length === 0 ? (
+          ) : myMedicines.length === 0 ? (
             <Muted style={styles.emptyText}>お薬の記録がありません</Muted>
           ) : (
-            medicines.slice(0, 5).map((m) => (
+            myMedicines.slice(0, 5).map((m) => (
               <View key={m.id} style={styles.medicineItem}>
                 <Text style={styles.medicineName}>{m.medicineName}</Text>
                 {m.dosage ? <Muted style={styles.medicineSub}>{m.dosage}</Muted> : null}
@@ -447,6 +595,15 @@ export default function MamaHealthScreen() {
           >
             <Plus size={16} color={palette.primary} />
             <Text style={styles.addMedicineBtnText}>お薬を記録</Text>
+          </Button>
+
+          {/* 記録が無くても常に表示（web と同じ。開くと空状態を出す）。 */}
+          <Button
+            variant="outline"
+            onPress={() => setShowMedHistory(true)}
+            style={[styles.addMedicineBtn, { marginTop: 8 }]}
+          >
+            <Text style={styles.addMedicineBtnText}>お薬の履歴を見る{myMedicines.length > 0 ? `（${myMedicines.length}件）` : ''}</Text>
           </Button>
         </Card>
 
@@ -473,10 +630,9 @@ export default function MamaHealthScreen() {
         transparent
         onRequestClose={() => setMedicineModalVisible(false)}
       >
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
+        {/* Modal 内では KeyboardAvoidingView が効かないため、キーボード高さ分だけ
+            余白を入れてカードを持ち上げる（client 2026-10）。 */}
+        <View style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}>
           <View style={styles.modalCard}>
             <Title style={styles.modalTitle}>お薬を記録</Title>
 
@@ -529,7 +685,46 @@ export default function MamaHealthScreen() {
               </Button>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* お薬の履歴を見る（web と同じ。これまでの服薬を新しい順に一覧表示）。 */}
+      <Modal
+        visible={showMedHistory}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowMedHistory(false)}
+      >
+        <View style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}>
+          <View style={[styles.modalCard, { maxHeight: '82%' }]}>
+            <View style={styles.medicineTitleRow}>
+              <Pill size={18} color={palette.primary} />
+              <Title style={styles.modalTitle}>お薬の履歴</Title>
+            </View>
+            <Muted style={styles.medHistCount}>{sortedMedicines.length}件</Muted>
+            <ScrollView style={{ marginTop: 4 }} showsVerticalScrollIndicator>
+              {sortedMedicines.length === 0 ? (
+                <Muted style={styles.emptyText}>お薬の記録がありません</Muted>
+              ) : (
+                sortedMedicines.map((m) => (
+                  <View key={m.id} style={styles.medHistItem}>
+                    <Text style={styles.medHistDate}>{formatMedDateTime(m.takenAt ?? m.createdAt)}</Text>
+                    <Text style={styles.medicineName}>{m.medicineName}</Text>
+                    {m.dosage ? <Muted style={styles.medicineSub}>用量: {m.dosage}</Muted> : null}
+                    {m.memo ? <Muted style={styles.medicineSub}>{m.memo}</Muted> : null}
+                  </View>
+                ))
+              )}
+            </ScrollView>
+            <Button
+              variant="outline"
+              onPress={() => setShowMedHistory(false)}
+              style={[styles.addMedicineBtn, { marginTop: 12 }]}
+            >
+              <Text style={styles.addMedicineBtnText}>閉じる</Text>
+            </Button>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -595,6 +790,20 @@ const styles = StyleSheet.create({
     color: palette.primary,
     marginBottom: 12,
   },
+
+  // 過去の記録
+  histToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 2 },
+  histToggleTitle: { fontSize: 13, fontFamily: fonts.bodyBold, color: '#DB2777' },
+  histToggleAction: { fontSize: 13, fontFamily: fonts.bodyBold, color: '#DB2777' },
+  histRow: { borderTopWidth: 1, borderTopColor: '#FBCFE8', paddingTop: 10, marginTop: 10 },
+  histHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  histDateWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  histDate: { fontSize: 12, fontFamily: fonts.bodyBold, color: '#BE185D' },
+  histTodayBadge: { backgroundColor: '#EC4899', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 },
+  histTodayText: { fontSize: 9, fontFamily: fonts.bodyBold, color: '#FFFFFF' },
+  histEdit: { fontSize: 11, fontFamily: fonts.bodyBold, color: '#F472B6' },
+  histChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  histNote: { fontSize: 10, color: palette.mutedForeground, marginTop: 6, lineHeight: 15 },
 
   // Toggle
   toggleRow: {
@@ -807,6 +1016,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: palette.border,
   },
+  medHistCount: { fontSize: 11, color: palette.mutedForeground, marginBottom: 4 },
+  medHistItem: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  medHistDate: { fontSize: 11, fontFamily: fonts.bodyBold, color: '#9333EA', marginBottom: 2 },
   medicineName: {
     fontSize: 14,
     fontFamily: fonts.bodySemibold,

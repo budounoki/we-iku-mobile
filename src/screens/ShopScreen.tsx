@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import {
   View,
   TouchableOpacity,
@@ -62,12 +63,19 @@ interface Coupon {
   createdBy: number;
 }
 
+// 注意: サーバー (/api/user-coupons) は user_coupons 行をそのまま返すため、
+// coupon はネストされず couponTitle / cost / ownerId がフラットに入る。
+// 以前は coupon?.cost / coupon?.title を読んでいて常に undefined になり、
+// 消費ポイントが 0 のまま（交換しても保有ポイントが減らない）＆マイクーポンが
+// 「クーポン / 0pt」表示になっていた（client 2026-10-08）。
 interface UserCoupon {
   id: number;
   couponId: number;
+  couponTitle: string;
+  cost: number;
+  ownerId: string;
   status: 'owned' | 'used';
   usedAt?: string;
-  coupon?: Coupon;
 }
 
 interface SponsoredCoupon {
@@ -118,6 +126,7 @@ function getUserLabel(role: 'papa' | 'mama' | 'other'): string {
 
 export default function ShopScreen() {
   const { isDark, colors } = useTheme();
+  const kbHeight = useKeyboardHeight();
   const { user } = useAuthStore();
   const { children, activeChildId } = useChildStore();
   const navigation = useNavigation<any>();
@@ -173,16 +182,32 @@ export default function ShopScreen() {
   // ── Points calculation ─────────────────────────────────────────────────────
 
   const { points, totalEarned } = useMemo(() => {
+    // 家族全体の獲得ポイントから、交換済みクーポンの消費ポイントを引く（家族共通の財布）。
+    // ※消費は uc.cost（フラット項目）で集計。以前は uc.coupon?.cost を見ていて常に
+    //   undefined → 消費が 0 のまま「交換しても減らない」バグになっていた。
+    //   親ごと集計（userId/ownerid 絞り込み）は、ログの userId がロールと一致しない
+    //   アカウントで残高が 0 になってしまったため採用しない（client 2026-10-08）。
     const earned = (logs as any[]).reduce((sum, l) => sum + calcLogPoints(l), 0);
-    const spent  = userCoupons.reduce((sum, uc) => sum + (uc.coupon?.cost ?? 0), 0);
+    const spent  = (userCoupons as UserCoupon[]).reduce((sum, uc) => sum + (uc.cost ?? 0), 0);
     return { points: Math.max(0, earned - spent), totalEarned: earned };
   }, [logs, userCoupons]);
 
+  // ありがとうログ件数（web版 Home.tsx の thanksCount と同じ算出）。以前は 0 固定で、
+  // チームパワーに「ありがとう」が反映されず web版より低く出ていた（client 2026-10-08）。
+  const thankYouCount = useMemo(
+    () => (logs as any[]).filter((l) => l.type === 'thanks' || l.type === 'thank_you').length,
+    [logs],
+  );
   const teamPower = useMemo(() => calcTeamPower({
     totalEarned,
-    thankYouCount: 0, // TODO: wire up actual thank-you count from API
+    thankYouCount,
     birthday: activeChild?.birthday,
-  }), [totalEarned, activeChild?.birthday]);
+  }), [totalEarned, thankYouCount, activeChild?.birthday]);
+
+  // 保有ポイントカードのグラデーション高さを実測する。react-native-svg の height="100%"
+  // はカードの高さが後から変わる（チームパワー行が遅れて表示される等）と追従せず、
+  // 下部が白く残ることがあった（client 2026-10-08: カード下に白帯＋黄色い数字）。
+  const [pointsCardH, setPointsCardH] = useState(0);
 
   // ── Mutations ──────────────────────────────────────────────────────────────
 
@@ -271,8 +296,8 @@ export default function ShopScreen() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
-  const ownedCoupons = userCoupons.filter((uc) => uc.status === 'owned');
-  const usedCoupons = userCoupons.filter((uc) => uc.status === 'used');
+  const ownedCoupons = (userCoupons as UserCoupon[]).filter((uc) => uc.status === 'owned');
+  const usedCoupons = (userCoupons as UserCoupon[]).filter((uc) => uc.status === 'used');
   const unreadNotifs = notifList.filter((n) => !n.read);
 
   const handleExchange = (coupon: Coupon) => {
@@ -287,7 +312,7 @@ export default function ShopScreen() {
   };
 
   const handleRedeem = (uc: UserCoupon) => {
-    Alert.alert('確認', `「${uc.coupon?.title ?? 'クーポン'}」を使用しますか？`, [
+    Alert.alert('確認', `「${uc.couponTitle ?? 'クーポン'}」を使用しますか？`, [
       { text: 'キャンセル', style: 'cancel' },
       { text: '使用する', onPress: () => redeemMutation.mutate(uc.id) },
     ]);
@@ -421,21 +446,29 @@ export default function ShopScreen() {
       )}
 
       {/* Points hero card — web: purple→green gradient + Gem badge */}
-      <Card style={styles.pointsCard}>
-        <Svg style={StyleSheet.absoluteFill as any} width="100%" height="100%">
+      <Card
+        style={styles.pointsCard}
+        onLayout={(e) => {
+          const h = Math.round(e.nativeEvent.layout.height);
+          setPointsCardH((prev) => (prev !== h ? h : prev));
+        }}
+      >
+        <Svg style={StyleSheet.absoluteFill as any} width="100%" height={pointsCardH || '100%'}>
           <Defs>
             <SvgLinearGradient id="ptsGrad" x1="0" y1="0" x2="1" y2="0">
               <Stop offset="0" stopColor={palette.primary} />
               <Stop offset="1" stopColor={palette.secondary} />
             </SvgLinearGradient>
           </Defs>
-          <Rect x="0" y="0" width="100%" height="100%" rx={radius.lg} fill="url(#ptsGrad)" />
+          <Rect x="0" y="0" width="100%" height={pointsCardH || '100%'} rx={radius.lg} fill="url(#ptsGrad)" />
         </Svg>
         <CardContent style={styles.pointsCardContent}>
           <View>
             <Text style={styles.pointsLabel}>保有ポイント</Text>
-            <Title style={styles.pointsValue}>{points}</Title>
-            <Text style={styles.pointsUnit}>pt</Text>
+            <View style={styles.pointsValueRow}>
+              <Title style={styles.pointsValue}>{points}</Title>
+              <Text style={styles.pointsUnit}>pt</Text>
+            </View>
           </View>
           <View style={styles.pointsGemCircle}>
             <Gem size={32} color={palette.primaryForeground} />
@@ -444,7 +477,7 @@ export default function ShopScreen() {
         {activeChild?.birthday && (
           <View style={styles.teamPowerRow}>
             <Text style={styles.teamPowerLabel}>チームパワー</Text>
-            <Text style={styles.teamPowerValue}>{teamPower.toFixed(1)}</Text>
+            <Text style={styles.teamPowerValue}>{teamPower}</Text>
           </View>
         )}
       </Card>
@@ -697,7 +730,7 @@ export default function ShopScreen() {
                     <Text style={styles.sectionLabel}>使えるクーポン</Text>
                   </View>
                   {ownedCoupons.map((uc) => {
-                    const Icon = getCouponIcon(uc.coupon?.title ?? '');
+                    const Icon = getCouponIcon(uc.couponTitle ?? '');
                     return (
                       <Card key={uc.id} style={styles.myCard}>
                         <View style={styles.couponRow}>
@@ -706,9 +739,9 @@ export default function ShopScreen() {
                           </View>
                           <View style={styles.couponInfo}>
                             <Text style={styles.couponTitle} numberOfLines={1}>
-                              {uc.coupon?.title ?? 'クーポン'}
+                              {uc.couponTitle ?? 'クーポン'}
                             </Text>
-                            <Muted style={styles.myCardSub}>{uc.coupon?.cost ?? 0}ptで交換</Muted>
+                            <Muted style={styles.myCardSub}>{uc.cost ?? 0}ptで交換</Muted>
                           </View>
                           <Button
                             variant="secondary"
@@ -732,7 +765,7 @@ export default function ShopScreen() {
                     <Text style={[styles.sectionLabel, { color: palette.mutedForeground }]}>使用済み</Text>
                   </View>
                   {usedCoupons.map((uc) => {
-                    const Icon = getCouponIcon(uc.coupon?.title ?? '');
+                    const Icon = getCouponIcon(uc.couponTitle ?? '');
                     return (
                       <Card key={uc.id} style={[styles.myCard, styles.myCardUsed]}>
                         <View style={styles.couponRow}>
@@ -741,7 +774,7 @@ export default function ShopScreen() {
                           </View>
                           <View style={styles.couponInfo}>
                             <Text style={styles.usedTitle} numberOfLines={1}>
-                              {uc.coupon?.title ?? 'クーポン'}
+                              {uc.couponTitle ?? 'クーポン'}
                             </Text>
                             {uc.usedAt && (
                               <Muted style={styles.usedAt}>
@@ -765,7 +798,7 @@ export default function ShopScreen() {
 
       {/* ── Add Custom Coupon Modal ───────────────────────────────────────────── */}
       <Modal visible={showAddModal} transparent animationType="slide" onRequestClose={() => setShowAddModal(false)}>
-        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={() => setShowAddModal(false)}>
+        <TouchableOpacity style={[styles.overlay, kbHeight > 0 && { paddingBottom: kbHeight }]} activeOpacity={1} onPress={() => setShowAddModal(false)}>
           <TouchableOpacity style={[styles.sheet, isDark && { backgroundColor: colors.card }]} activeOpacity={1}>
             <View style={styles.sheetHandle} />
             <Title style={styles.sheetTitle}>カスタムクーポン作成</Title>
@@ -813,7 +846,7 @@ export default function ShopScreen() {
 
       {/* ── ポイントのしくみ Modal ── */}
       <Modal visible={showPointsInfo} transparent animationType="slide" onRequestClose={() => setShowPointsInfo(false)}>
-        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={() => setShowPointsInfo(false)}>
+        <TouchableOpacity style={[styles.overlay, kbHeight > 0 && { paddingBottom: kbHeight }]} activeOpacity={1} onPress={() => setShowPointsInfo(false)}>
           <TouchableOpacity style={[styles.sheet, { paddingBottom: 32 }, isDark && { backgroundColor: colors.card }]} activeOpacity={1}>
             <View style={styles.sheetHandle} />
             <Title style={styles.sheetTitle}>ポイントのしくみ</Title>
@@ -842,7 +875,7 @@ export default function ShopScreen() {
               {activeChild?.birthday && (
                 <View style={styles.teamPowerCurrent}>
                   <Text style={styles.teamPowerCurrentLabel}>現在のチームパワー</Text>
-                  <Text style={styles.teamPowerCurrentValue}>{teamPower.toFixed(1)}</Text>
+                  <Text style={styles.teamPowerCurrentValue}>{teamPower}</Text>
                 </View>
               )}
             </View>
@@ -862,7 +895,7 @@ export default function ShopScreen() {
 const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: palette.background },
 
-  screenContent: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 32 },
+  screenContent: { paddingHorizontal: 20, paddingTop: 48, paddingBottom: 32 },
 
   // Header
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 4 },
@@ -944,6 +977,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     marginBottom: 20,
     overflow: 'hidden',
+    // SVGグラデーションが実測で高さ追従するまでの白帯防止フォールバック。
+    backgroundColor: palette.primary,
     ...shadows.soft,
   },
   pointsCardContent: {
@@ -951,6 +986,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 20,
+    // CardContent 既定の paddingTop:0 を上書きしないと保有ポイントが上端に貼り付く
+    // （padding:20 では paddingTop が勝たない）。上に余白を入れる（client 2026-10-08）。
+    paddingTop: 20,
   },
   pointsLabel: {
     fontFamily: fonts.bodyBold,
@@ -959,8 +997,11 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.85)',
     textTransform: 'uppercase',
   },
+  // 「10 pt」を横並び（ベースライン揃え）にする。以前は pt が数字の下に改行されていた
+  // （client 2026-10-08: pt は数字の横に置きたい）。
+  pointsValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   pointsValue: { fontSize: 36, color: palette.primaryForeground },
-  pointsUnit: { fontSize: 12, color: 'rgba(255,255,255,0.85)' },
+  pointsUnit: { fontSize: 13, color: 'rgba(255,255,255,0.85)' },
   pointsGemCircle: {
     width: 64,
     height: 64,
@@ -1005,9 +1046,12 @@ const styles = StyleSheet.create({
   },
   couponInfo: { flex: 1, minWidth: 0 },
   couponTitle: { fontFamily: fonts.bodyBold, fontSize: 14, color: palette.foreground },
-  couponCostRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  // flexWrap: 狭い端末で「1 pt + カスタム」バッジが couponInfo の幅をはみ出し、
+  // 右の編集ペンアイコンに重なっていた（client 2026-10-08）。収まらなければ折り返す。
+  couponCostRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, rowGap: 4, marginTop: 2 },
   couponCost: { fontFamily: fonts.bodyBold, fontSize: 12, color: palette.accentForeground },
-  couponActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // flexShrink: 0 で操作ボタン群の幅を確保し、情報側がはみ出してもボタンに乗らないように。
+  couponActions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
   iconBtn: {
     width: 32,
     height: 32,

@@ -23,12 +23,13 @@ import InvitationScreen from '../screens/InvitationScreen';
 import AlarmScreen from '../screens/AlarmScreen';
 import ImportScreen from '../screens/ImportScreen';
 import ShortcutsScreen from '../screens/ShortcutsScreen';
-import CommunityScreen from '../screens/CommunityScreen';
 import ReviewScreen from '../screens/ReviewScreen';
 import MamaHealthScreen from '../screens/MamaHealthScreen';
 import DashboardScreen from '../screens/DashboardScreen';
 import SkillTreeScreen from '../screens/SkillTreeScreen';
 import FAQScreen from '../screens/FAQScreen';
+import GuideScreen from '../screens/GuideScreen';
+import SupporterManageScreen from '../screens/SupporterManageScreen';
 import DailyStatsScreen from '../screens/DailyStatsScreen';
 import TipsScreen from '../screens/TipsScreen';
 import LegalScreen from '../screens/LegalScreen';
@@ -46,12 +47,13 @@ export type RootStackParamList = {
   Alarm: undefined;
   Import: undefined;
   Shortcuts: undefined;
-  Community: undefined;
   Review: undefined;
-  MamaHealth: undefined;
+  MamaHealth: { focus?: 'medicine' } | undefined;
   Dashboard: undefined;
   SkillTree: undefined;
   FAQ: undefined;
+  Guide: undefined;
+  SupporterManage: undefined;
   DailyStats: undefined;
   Tips: undefined;
   Legal: undefined;
@@ -147,11 +149,6 @@ export default function AppNavigator() {
               options={{ headerShown: true, title: '音声アシスタント連携' }}
             />
             <Stack.Screen
-              name="Community"
-              component={CommunityScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
               name="Review"
               component={ReviewScreen}
               options={{ headerShown: true, title: '振り返り' }}
@@ -195,6 +192,16 @@ export default function AppNavigator() {
               name="FAQ"
               component={FAQScreen}
               options={{ headerShown: true, title: 'よくある質問' }}
+            />
+            <Stack.Screen
+              name="Guide"
+              component={GuideScreen}
+              options={{ headerShown: true, title: '使い方ガイド' }}
+            />
+            <Stack.Screen
+              name="SupporterManage"
+              component={SupporterManageScreen}
+              options={{ headerShown: true, title: 'サポーター管理' }}
             />
           </>
         )}

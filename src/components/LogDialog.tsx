@@ -26,6 +26,12 @@ import {
   TextInput,
   ScrollView,
   StyleSheet,
+  AppState,
+  Pressable,
+  PanResponder,
+  Alert,
+  Keyboard,
+  Platform,
 } from 'react-native';
 import {
   Milk, Baby, Moon, Apple, Cookie, Star, Bath, Blocks, School, Sparkles,
@@ -47,6 +53,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { palette, fonts, radius, shadows } from '../theme/tokens';
 import { Text } from '../theme/ui';
 import DatePickerModal from './DatePickerModal';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import ScrollTimePicker, { nowHHMM } from './ScrollTimePicker';
 
 // ── Food-picker types + categories (kept in sync with FoodTrackerScreen).
@@ -145,6 +152,12 @@ interface Props {
   onEndSleepSession?: (sessionId: number, details?: SettlingDetails) => void;
   /** Called when user manually enters a past sleep entry */
   onManualSleep?: (data: { durationMin: number; startedAt: string } & SettlingDetails) => void;
+  /** Called from ねんね中「時刻を修正」: 入眠時刻を訂正（＋任意で起床時刻を確定して終了）。
+   *  endedAt を渡すとセッションを終了して完了ログを作成、省略すると入眠時刻のみ訂正して継続。 */
+  onCorrectSleepTime?: (
+    sessionId: number,
+    data: { startedAt: string; endedAt?: string } & SettlingDetails,
+  ) => void;
 }
 
 interface SettlingDetails {
@@ -165,6 +178,12 @@ const FOOD_AMOUNTS: { label: string; color: string }[] = [
   { label: '8割',     color: '#34D399' }, // emerald-400
   { label: '完食',     color: '#22C55E' }, // green-500
 ];
+
+/**
+ * 押下を維持する余裕（px）。キーボードが閉じてシートが下へ動いても、
+ * 「記録する」の1回目の押下がキャンセルされないようにするため大きく取る。
+ */
+const PRESS_RETENTION = { top: 600, left: 600, right: 600, bottom: 600 };
 
 const MEAL_RESULTS = [
   { id: 'refused',   label: 'イヤイヤ' },
@@ -305,9 +324,20 @@ const TYPE_ICON: Record<string, LucideIcon> = {
 const NO_ASSIGNEE = new Set(['temperature', 'thank_you', 'symptoms']);
 
 // types with simple required text body
+/**
+ * 入力欄が1つだけの記録タイプ。下の汎用ブランチ（TEXT_TYPES.has(logType)）で
+ * textValue にひもづく入力欄を描画し、textReady で必須チェックする。
+ *
+ * 'discipline'（しつけ）はここに入れてはいけない。しつけは専用ブランチを持ち、
+ * 理由メモは textValue ではなく disciplineMemo にひもづいている。TEXT_TYPES に
+ * 入れると textReady が textValue（常に空）を見てしまい、タイプを選んで
+ * メモを書いても「記録する」が押せないまま（disabled）になる
+ * （client 2026-10: しつけの記録でボタンが押せない）。
+ * しつけの必須条件は disciplineReady（タイプ選択）側で見ている。
+ */
 const TEXT_TYPES = new Set([
   'milestone', 'word', 'achievement', 'thank_you', 'school',
-  'appointment', 'discipline', 'interest', 'schedule', 'school_prep', 'snack',
+  'appointment', 'interest', 'schedule', 'school_prep', 'snack',
 ]);
 
 const SETTLING_METHOD_OPTIONS = ['抱っこ', '抱っこひも', '添い乳', '添い寝', 'なし'];
@@ -404,7 +434,7 @@ function SettlingSelector({
 
 export default function LogDialog({
   visible, logType, userRole, activeSleepSession,
-  onClose, onSave, onEndSleepSession, onManualSleep,
+  onClose, onSave, onEndSleepSession, onManualSleep, onCorrectSleepTime,
 }: Props) {
   // Navigation for in-dialog affordances (e.g. 食材チェックリスト button
   // inside the 離乳食 dialog — matches web ActionButtons.tsx:2267-2275).
@@ -412,7 +442,10 @@ export default function LogDialog({
   const { isDark, colors } = useTheme();
 
   // ── Assignee (担当者 複数選択可) ─────────────────────────────────────────────
-  const [assignees, setAssignees] = useState<Set<'self' | 'partner' | 'other'>>(new Set(['self']));
+  // 担当者のデフォルトは常に「ママ」に統一（ログイン者の役割に関わらず）— クライアント要望 2026-10。
+  // ママ = 自分が mama なら 'self'、papa なら 'partner'（相手=ママ）。開き直すたびにママへ戻る。
+  const mamaDefaultAssignee: 'self' | 'partner' = userRole === 'mama' ? 'self' : 'partner';
+  const [assignees, setAssignees] = useState<Set<'self' | 'partner' | 'other'>>(new Set([mamaDefaultAssignee]));
   const selfLabel    = userRole === 'mama' ? 'ママ' : 'パパ';
   const partnerLabel = userRole === 'mama' ? 'パパ' : 'ママ';
 
@@ -436,6 +469,10 @@ export default function LogDialog({
   // past records couldn't be entered (client report 2026-09-25).
   const [logDate, setLogDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [showLogDatePicker, setShowLogDatePicker] = useState(false);
+
+  // KeyboardAvoidingView は RN の Modal 内（iOS）では効かないため、共通フックで
+  // キーボード高さ（＋ツールバー分の余白）を測り、その分シートを持ち上げる。
+  const kbHeight = useKeyboardHeight();
   const createdAtIso = (): string | undefined => {
     if (!logTime || logTime.length < 4) return undefined;
     const m = /^(\d{1,2}):(\d{2})$/.exec(logTime.trim());
@@ -460,6 +497,11 @@ export default function LogDialog({
   const [breastTimerSide,    setBreastTimerSide]    = useState<'left' | 'right'>('left');
   const [breastTimerSec,     setBreastTimerSec]     = useState(0);
   const breastRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 壁時計ベースのタイマー：バックグラウンドで setInterval が止まっても、
+  // 経過は Date.now() から算出するため「他アプリ操作でタイマーが止まる」
+  // 問題が起きない（クライアント報告 2026-10）。
+  const breastStartRef = useRef<number>(0); // 現在稼働セグメント開始の ms
+  const breastAccumRef = useRef<number>(0); // 一時停止までに累積した秒
   const [isExpressed, setIsExpressed] = useState(false);
   const [expressedMl, setExpressedMl] = useState(0);
   const [formulaMl,   setFormulaMl]   = useState(0);
@@ -472,26 +514,81 @@ export default function LogDialog({
   const [excludeFromInterval, setExcludeFromInterval] = useState(false);
 
   const clearBreast = () => { if (breastRef.current) { clearInterval(breastRef.current); breastRef.current = null; } };
+  // 経過秒は tick カウントではなく壁時計（Date.now()）から算出する。
+  const tickBreast = () =>
+    setBreastTimerSec(breastAccumRef.current + Math.floor((Date.now() - breastStartRef.current) / 1000));
   const startBreastTimer = (side: 'left' | 'right') => {
     clearBreast();
     setBreastTimerSide(side);
+    breastAccumRef.current = 0;
+    breastStartRef.current = Date.now();
     setBreastTimerSec(0);
     setBreastTimerPaused(false);
     setBreastTimerRunning(true);
-    breastRef.current = setInterval(() => setBreastTimerSec(s => s + 1), 1000);
+    breastRef.current = setInterval(tickBreast, 1000);
   };
-  const pauseBreastTimer = () => { clearBreast(); setBreastTimerRunning(false); setBreastTimerPaused(true); };
+  const pauseBreastTimer = () => {
+    clearBreast();
+    // 稼働していたセグメント分を壁時計で累積へ確定。
+    breastAccumRef.current += Math.floor((Date.now() - breastStartRef.current) / 1000);
+    setBreastTimerSec(breastAccumRef.current);
+    setBreastTimerRunning(false);
+    setBreastTimerPaused(true);
+  };
   const resumeBreastTimer = () => {
-    setBreastTimerRunning(true); setBreastTimerPaused(false);
-    breastRef.current = setInterval(() => setBreastTimerSec(s => s + 1), 1000);
+    breastStartRef.current = Date.now();
+    setBreastTimerRunning(true);
+    setBreastTimerPaused(false);
+    breastRef.current = setInterval(tickBreast, 1000);
   };
   const stopBreastTimer = () => {
     clearBreast();
-    const mins = Math.round(breastTimerSec / 60);
+    const totalSec = breastAccumRef.current
+      + (breastTimerRunning ? Math.floor((Date.now() - breastStartRef.current) / 1000) : 0);
+    const mins = Math.round(totalSec / 60);
     if (breastTimerSide === 'left')  { setBreastLeftMin(p => p + mins); setLastAddedLeft(mins); setLastAddedRight(0); }
     else                             { setBreastRightMin(p => p + mins); setLastAddedRight(mins); setLastAddedLeft(0); }
+    breastAccumRef.current = 0; breastStartRef.current = 0;
     setBreastTimerRunning(false); setBreastTimerPaused(false); setBreastTimerSec(0);
   };
+  // バックグラウンドから復帰した瞬間に壁時計で即再計算（次の tick を待たない）。
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active' && breastRef.current) tickBreast();
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── モーダルのキャンセル操作（背景タップ / バーのタップ / 下スワイプ）──────────
+  // 入力欄・時刻選択のスクロールでは閉じない（ジェスチャはバーと背景のみに付与）。
+  // 授乳などのタイマー稼働中は、これまでどおり終了確認を表示する（クライアント要望 2026-10）。
+  const requestClose = () => {
+    const timerRunning = breastTimerRunning || exprActiveSide !== null;
+    if (timerRunning) {
+      Alert.alert('タイマーが動いています', '記録せずに閉じますか？計測中の時間は保存されません。', [
+        { text: 'キャンセル', style: 'cancel' },
+        { text: '閉じる', style: 'destructive', onPress: onClose },
+      ]);
+    } else {
+      onClose();
+    }
+  };
+  // 「記録する」の二重確定ガード。ダイアログを開くたびに解除する。
+  const savedRef = useRef(false);
+  useEffect(() => { if (visible) savedRef.current = false; }, [visible]);
+
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+  const closePan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderRelease: (_, g) => {
+        // 下スワイプ、またはバー付近の軽いタップで閉じる。
+        if (g.dy > 40 || (Math.abs(g.dy) < 10 && Math.abs(g.dx) < 10)) requestCloseRef.current();
+      },
+    }),
+  ).current;
 
   // ── Expressed (搾乳) — timer / 手入力, left+right, alarm, 2-step ─────────────
   const [exprStep,       setExprStep]       = useState<'timer' | 'amount'>('timer');
@@ -506,16 +603,41 @@ export default function LogDialog({
   const [exprRightAlarm, setExprRightAlarm] = useState(false);
   const [exprAmount,     setExprAmount]     = useState(0);
   const exprRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 母乳タイマーと同じ壁時計方式。搾乳も他アプリ操作（バックグラウンド）で
+  // setInterval が止まると経過が止まっていた（client 2026-10）。左右それぞれ確定秒を
+  // 累積し、稼働中セグメントは Date.now() から算出する。
+  const exprLeftAccumRef  = useRef<number>(0); // 左の確定済み秒
+  const exprRightAccumRef = useRef<number>(0); // 右の確定済み秒
+  const exprSegStartRef   = useRef<number>(0); // 現在稼働中セグメント開始の ms
 
   const clearExpr = () => { if (exprRef.current) { clearInterval(exprRef.current); exprRef.current = null; } };
+  // 稼働中セグメントを確定し、表示秒も更新する。
+  const commitExprSegment = (activeSide: 'left' | 'right' | null) => {
+    if (!activeSide || !exprSegStartRef.current) return;
+    const seg = Math.floor((Date.now() - exprSegStartRef.current) / 1000);
+    if (activeSide === 'left')  { exprLeftAccumRef.current  += seg; setExprLeftSec(exprLeftAccumRef.current); }
+    else                        { exprRightAccumRef.current += seg; setExprRightSec(exprRightAccumRef.current); }
+    exprSegStartRef.current = 0;
+  };
+  const tickExpr = (activeSide: 'left' | 'right') => {
+    const seg = Math.floor((Date.now() - exprSegStartRef.current) / 1000);
+    if (activeSide === 'left') setExprLeftSec(exprLeftAccumRef.current + seg);
+    else                       setExprRightSec(exprRightAccumRef.current + seg);
+  };
   useEffect(() => {
     clearExpr();
-    if (exprActiveSide === 'left') {
-      exprRef.current = setInterval(() => setExprLeftSec(s => s + 1), 1000);
-    } else if (exprActiveSide === 'right') {
-      exprRef.current = setInterval(() => setExprRightSec(s => s + 1), 1000);
+    if (exprActiveSide) {
+      exprRef.current = setInterval(() => tickExpr(exprActiveSide), 1000);
     }
     return clearExpr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exprActiveSide]);
+  // バックグラウンド復帰時に搾乳の経過を壁時計で即再計算（次の tick を待たない）。
+  useEffect(() => {
+    if (!exprActiveSide) return;
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') tickExpr(exprActiveSide); });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exprActiveSide]);
 
   // 搾乳アラーム
@@ -526,7 +648,11 @@ export default function LogDialog({
   }, [exprLeftSec, exprRightSec, exprAlarmMin, exprLeftAlarm, exprRightAlarm]);
 
   const toggleExprSide = (side: 'left' | 'right') => {
-    setExprActiveSide(prev => (prev === side ? null : side));
+    // 稼働中セグメントを確定してから切り替える（壁時計）。
+    commitExprSegment(exprActiveSide);
+    const next = exprActiveSide === side ? null : side;
+    if (next) exprSegStartRef.current = Date.now();
+    setExprActiveSide(next);
   };
 
   // ── Diaper (pee/poop multi-toggle + うんち詳細) ──────────────────────────────
@@ -552,6 +678,16 @@ export default function LogDialog({
   const [showManualDatePicker, setShowManualDatePicker] = useState(false);
   const [manualSleepError, setManualSleepError] = useState('');
   const [sleepElapsedMin, setSleepElapsedMin] = useState(0);
+  // ねんね中「時刻を修正」: 稼働中セッションの入眠時刻を訂正（＋任意で起床時刻を確定）。
+  // originwebapp ActionButtons.tsx の showWakeTimePickers ページ移植。寝ている間に
+  // 「起きた」を押し忘れても、後から正しい起床時刻で終了できる（client 2026-10-08）。
+  const [showWakeEdit, setShowWakeEdit] = useState(false);
+  const [wakeEditDate,  setWakeEditDate]  = useState(() => new Date().toISOString().split('T')[0]);
+  const [wakeEditStart, setWakeEditStart] = useState(''); // HH:MM（入眠時刻）
+  const [wakeEditWake,  setWakeEditWake]  = useState(''); // HH:MM（起床時刻）
+  const [wakeEditNoWake, setWakeEditNoWake] = useState(false); // true=起床時刻は確定せず入眠のみ訂正
+  const [showWakeEditDatePicker, setShowWakeEditDatePicker] = useState(false);
+  const [wakeEditError, setWakeEditError] = useState('');
   // 寝かしつけ方法・場所・かかった時間（任意、originwebapp移植 2026-09-10）
   const [settlingMethod, setSettlingMethod] = useState<string[]>([]);
   const [settlingMinutes, setSettlingMinutes] = useState(0);
@@ -580,6 +716,7 @@ export default function LogDialog({
   useEffect(() => {
     if (visible && logType === 'sleep') {
       setSleepStep(activeSleepSession ? 'active' : 'main');
+      setShowWakeEdit(false);
     }
   }, [visible, logType, activeSleepSession]);
 
@@ -669,18 +806,23 @@ export default function LogDialog({
 
   // ─── Reset all state when a new dialog opens ────────────────────────────────
   useEffect(() => {
-    if (!visible) return;
+    // 閉じたときも稼働中のタイマーを止める。キャンセル/背景タップ/スワイプで
+    // タイマー稼働中に閉じると setInterval が残り、非表示のまま毎秒 setState して
+    // 再レンダリングし続けていた（client 2026-10-08）。
+    if (!visible) { clearBreast(); clearExpr(); clearSleepElapsed(); return; }
     clearBreast(); clearExpr(); clearSleepElapsed();
-    setAssignees(new Set(['self']));
+    setAssignees(new Set([mamaDefaultAssignee]));
     setShowTimeEdit(false); setLogTime('');
     setMilkStep('type'); setSelectedMilkType('breast');
     setBreastLeftMin(0); setBreastRightMin(0); setLastAddedLeft(0); setLastAddedRight(0);
     setBreastTimerRunning(false); setBreastTimerPaused(false); setBreastTimerSide('left'); setBreastTimerSec(0);
+    breastStartRef.current = 0; breastAccumRef.current = 0;
     setIsExpressed(false); setExpressedMl(0); setFormulaMl(0);
     setSpitUp(false); setSpitUpAmount(''); setSpitUpTiming(''); setSpitUpNote('');
     setExcludeFromInterval(false);
     setExprStep('timer'); setExprManualMode(false);
     setExprLeftSec(0); setExprRightSec(0); setExprActiveSide(null);
+    exprLeftAccumRef.current = 0; exprRightAccumRef.current = 0; exprSegStartRef.current = 0;
     setExprManualLeft(''); setExprManualRight('');
     setExprAlarmMin(0); setExprLeftAlarm(false); setExprRightAlarm(false); setExprAmount(0);
     setDiaperPee(false); setDiaperPoop(false); setPoopColor(''); setPoopConsistency(''); setStoolAmount('');
@@ -812,6 +954,49 @@ export default function LogDialog({
       });
     }
     resetSettlingDetails();
+    onClose();
+  };
+
+  // 稼働中セッションを開いたら「時刻を修正」の入眠時刻をセッションの実値で初期化。
+  const openWakeEdit = () => {
+    if (!activeSleepSession) return;
+    const s = new Date(activeSleepSession.startedAt);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    setWakeEditDate(`${s.getFullYear()}-${pad(s.getMonth() + 1)}-${pad(s.getDate())}`);
+    setWakeEditStart(`${pad(s.getHours())}:${pad(s.getMinutes())}`);
+    setWakeEditWake(nowHHMM()); // 既定: 今を起床時刻として提示（押し忘れの修正が主目的）
+    setWakeEditNoWake(false);
+    setWakeEditError('');
+    setShowWakeEdit(true);
+  };
+
+  const handleWakeEditSubmit = () => {
+    if (!activeSleepSession) return;
+    const mk = (hhmm: string) =>
+      new Date(`${wakeEditDate}T${/^\d{1,2}:\d{2}$/.test(hhmm) ? hhmm.padStart(5, '0') : '00:00'}:00`);
+    const start = wakeEditStart ? mk(wakeEditStart) : null;
+    if (!start || isNaN(start.getTime())) { setWakeEditError('入眠時刻を入力してください'); return; }
+    const settlingDetails = {
+      ...(settlingMethod.length > 0 ? { settlingMethod: settlingMethod.join('・') } : {}),
+      ...(settlingMinutes > 0 ? { settlingMinutes } : {}),
+      ...(sleepLocation ? { sleepLocation } : {}),
+    };
+    if (wakeEditNoWake) {
+      // 入眠時刻のみ訂正してねんねは継続。
+      onCorrectSleepTime?.(activeSleepSession.id, { startedAt: start.toISOString(), ...settlingDetails });
+    } else {
+      let end = wakeEditWake ? mk(wakeEditWake) : null;
+      if (!end || isNaN(end.getTime())) {
+        setWakeEditError('起床時刻を入力してください（「入力しない」を使うと省略できます）'); return;
+      }
+      if (end.getTime() === start.getTime()) { setWakeEditError('起床時刻は入眠時刻より後にしてください'); return; }
+      if (end < start) end = new Date(end.getTime() + 24 * 60 * 60 * 1000); // 夜間睡眠（22:00→6:00）
+      onCorrectSleepTime?.(activeSleepSession.id, {
+        startedAt: start.toISOString(), endedAt: end.toISOString(), ...settlingDetails,
+      });
+    }
+    resetSettlingDetails();
+    setShowWakeEdit(false);
     onClose();
   };
 
@@ -1096,7 +1281,89 @@ export default function LogDialog({
   let body: React.ReactNode = null;
 
   if (isSleepType) {
-    if (sleepStep === 'active' && activeSleepSession) {
+    if (sleepStep === 'active' && activeSleepSession && showWakeEdit) {
+      // 時刻を修正ページ: 入眠時刻を訂正（＋任意で起床時刻を確定して終了）。
+      const wsd = wakeEditStart && /^\d{1,2}:\d{2}$/.test(wakeEditStart)
+        ? new Date(`${wakeEditDate}T${wakeEditStart.padStart(5, '0')}:00`) : null;
+      let wed = wakeEditWake && /^\d{1,2}:\d{2}$/.test(wakeEditWake)
+        ? new Date(`${wakeEditDate}T${wakeEditWake.padStart(5, '0')}:00`) : null;
+      const wakeOvernight = !!(wsd && wed && wed < wsd);
+      if (wakeOvernight && wed) wed = new Date(wed.getTime() + 24 * 60 * 60 * 1000);
+      const wakeDur = wsd && wed ? Math.round((wed.getTime() - wsd.getTime()) / 60000) : 0;
+      const wakeDateObj = new Date(`${wakeEditDate}T00:00:00`);
+      body = (
+        <View style={s.section}>
+          <View style={s.labelWithIcon}>
+            <Calendar size={14} color={GRAY_500} strokeWidth={2.5} />
+            <Text style={[s.sectionLabel, s.timeLabelText]}>日付</Text>
+          </View>
+          <TouchableOpacity style={s.input} onPress={() => setShowWakeEditDatePicker(true)}>
+            <Text style={{ fontSize: 15, color: '#374151' }}>
+              {wakeDateObj.getFullYear()}年{wakeDateObj.getMonth() + 1}月{wakeDateObj.getDate()}日
+            </Text>
+          </TouchableOpacity>
+          <View style={s.timeLabel}>
+            <Moon size={14} color={GRAY_500} strokeWidth={2.5} />
+            <Text style={[s.sectionLabel, s.timeLabelText]}>入眠時刻</Text>
+          </View>
+          <ScrollTimePicker
+            value={wakeEditStart || nowHHMM()}
+            onChange={(t) => { setWakeEditStart(t); setWakeEditError(''); }}
+          />
+          <View style={s.rowBetween}>
+            <View style={s.timeLabel}>
+              <Sun size={14} color={GRAY_500} strokeWidth={2.5} />
+              <Text style={[s.sectionLabel, s.timeLabelText]}>起床時刻</Text>
+            </View>
+            <TouchableOpacity
+              style={[s.miniToggle, wakeEditNoWake && s.miniToggleOn]}
+              onPress={() => {
+                // 起床入力に戻すときは state を今の時刻で埋める。ScrollTimePicker は
+                // スクロールされるまで onChange を出さないため、'' のままだと時刻が
+                // 表示されているのに「起床時刻を入力してください」になってしまう。
+                setWakeEditNoWake(v => { const next = !v; setWakeEditWake(next ? '' : nowHHMM()); return next; });
+                setWakeEditError('');
+              }}
+            >
+              <Text style={[s.miniToggleText, wakeEditNoWake && s.miniToggleTextOn]}>
+                {wakeEditNoWake ? 'まだ起きていない' : '入力しない'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {!wakeEditNoWake && (
+            <ScrollTimePicker
+              value={wakeEditWake || nowHHMM()}
+              onChange={(t) => { setWakeEditWake(t); setWakeEditError(''); }}
+            />
+          )}
+          {wakeEditNoWake && (
+            <View style={s.infoBox}>
+              <Text style={s.infoBoxText}>入眠時刻のみ修正します。ねんねは継続中のままです。</Text>
+            </View>
+          )}
+          {!wakeEditNoWake && wakeDur > 0 && (
+            <View style={s.infoBox}>
+              <Text style={[s.infoBoxText, { fontWeight: '900', color: INDIGO_700 }]}>
+                {fmtElapsed(wakeDur)}のねんね{wakeOvernight ? '（翌朝までの夜間睡眠として記録します）' : ''}
+              </Text>
+            </View>
+          )}
+          {!!wakeEditError && <Text style={s.errorText}>{wakeEditError}</Text>}
+          <View style={s.row}>
+            <TouchableOpacity
+              style={[s.outlineBtn, { flex: 0, paddingHorizontal: 18 }]}
+              onPress={() => { setShowWakeEdit(false); setWakeEditError(''); }}
+            >
+              <Text style={s.outlineBtnText}>戻る</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.primarySolid, { flex: 1, backgroundColor: INDIGO_500 }]} onPress={handleWakeEditSubmit}>
+              <Sun size={18} color="#fff" strokeWidth={2.5} />
+              <Text style={s.primarySolidText}>{wakeEditNoWake ? '保存' : '記録する'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    } else if (sleepStep === 'active' && activeSleepSession) {
       body = (
         <View style={s.section}>
           <View style={s.sleepActiveCard}>
@@ -1130,13 +1397,22 @@ export default function LogDialog({
             <Sun size={20} color="#fff" strokeWidth={2.5} />
             <Text style={s.wakeBtnText}>起きた（記録して終了）</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.outlineBtn, { borderColor: INDIGO_200, marginTop: 8 }]}
-            onPress={() => { setSleepStep('manual'); setManualNoEnd(false); setManualSleepError(''); setManualDate(new Date().toISOString().split('T')[0]); if (!manualStart) setManualStart(nowHHMM()); if (!manualEnd) setManualEnd(nowHHMM()); }}
-          >
-            <ClipboardList size={16} color={INDIGO_600} strokeWidth={2.5} />
-            <Text style={[s.outlineBtnText, { color: INDIGO_600 }]}>昼寝を記録</Text>
-          </TouchableOpacity>
+          <View style={[s.row, { marginTop: 8 }]}>
+            <TouchableOpacity
+              style={[s.outlineBtn, { flex: 1, borderColor: '#FDE68A' }]}
+              onPress={openWakeEdit}
+            >
+              <Sun size={16} color="#F59E0B" strokeWidth={2.5} />
+              <Text style={[s.outlineBtnText, { color: '#D97706' }]}>時刻を修正</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.outlineBtn, { flex: 1, borderColor: INDIGO_200 }]}
+              onPress={() => { setSleepStep('manual'); setManualNoEnd(false); setManualSleepError(''); setManualDate(new Date().toISOString().split('T')[0]); if (!manualStart) setManualStart(nowHHMM()); if (!manualEnd) setManualEnd(nowHHMM()); }}
+            >
+              <ClipboardList size={16} color={INDIGO_600} strokeWidth={2.5} />
+              <Text style={[s.outlineBtnText, { color: INDIGO_600 }]}>昼寝を記録</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       );
     } else if (sleepStep === 'manual') {
@@ -1151,16 +1427,16 @@ export default function LogDialog({
         <View style={s.section}>
           <View style={s.labelWithIcon}>
             <Calendar size={14} color={GRAY_500} strokeWidth={2.5} />
-            <Text style={s.sectionLabel}>日付</Text>
+            <Text style={[s.sectionLabel, s.timeLabelText]}>日付</Text>
           </View>
           <TouchableOpacity style={s.input} onPress={() => setShowManualDatePicker(true)}>
             <Text style={{ fontSize: 15, color: '#374151' }}>
               {manualDateObj.getFullYear()}年{manualDateObj.getMonth() + 1}月{manualDateObj.getDate()}日
             </Text>
           </TouchableOpacity>
-          <View style={s.labelWithIcon}>
+          <View style={s.timeLabel}>
             <Moon size={14} color={GRAY_500} strokeWidth={2.5} />
-            <Text style={s.sectionLabel}>入眠時刻</Text>
+            <Text style={[s.sectionLabel, s.timeLabelText]}>入眠時刻</Text>
           </View>
           {/* Wheel picker replaces typed HH:MM (client feedback 2026-09-09). */}
           <ScrollTimePicker
@@ -1168,9 +1444,9 @@ export default function LogDialog({
             onChange={(t) => { setManualStart(t); setManualSleepError(''); }}
           />
           <View style={s.rowBetween}>
-            <View style={s.labelWithIcon}>
+            <View style={s.timeLabel}>
               <Sun size={14} color={GRAY_500} strokeWidth={2.5} />
-              <Text style={s.sectionLabel}>起床時刻</Text>
+              <Text style={[s.sectionLabel, s.timeLabelText]}>起床時刻</Text>
             </View>
             <TouchableOpacity
               style={[s.miniToggle, manualNoEnd && s.miniToggleOn]}
@@ -1261,9 +1537,9 @@ export default function LogDialog({
       const dur = sd && ed ? Math.round((ed.getTime() - sd.getTime()) / 60000) : 0;
       body = (
         <View style={s.section}>
-          <View style={s.labelWithIcon}>
+          <View style={s.timeLabel}>
             <Moon size={14} color={GRAY_500} strokeWidth={2.5} />
-            <Text style={s.sectionLabel}>入眠時刻</Text>
+            <Text style={[s.sectionLabel, s.timeLabelText]}>入眠時刻</Text>
           </View>
           {/* Wheel picker replaces typed HH:MM (client feedback 2026-09-09). */}
           <ScrollTimePicker
@@ -1271,9 +1547,9 @@ export default function LogDialog({
             onChange={(t) => { setSleepQuickStart(t); setManualSleepError(''); }}
           />
           <View style={s.rowBetween}>
-            <View style={s.labelWithIcon}>
+            <View style={s.timeLabel}>
               <Sun size={14} color={GRAY_500} strokeWidth={2.5} />
-              <Text style={s.sectionLabel}>起床時刻</Text>
+              <Text style={[s.sectionLabel, s.timeLabelText]}>起床時刻</Text>
             </View>
             <TouchableOpacity
               style={[s.miniToggle, sleepQuickNoEnd && s.miniToggleOn]}
@@ -1570,9 +1846,9 @@ export default function LogDialog({
             <TouchableOpacity
               style={[s.segment, exprManualMode && s.segmentOn]}
               onPress={() => {
-                if (exprActiveSide !== null) setExprActiveSide(null);
-                if (!exprManualLeft && exprLeftSec > 0)  setExprManualLeft(String(Math.round(exprLeftSec / 60)));
-                if (!exprManualRight && exprRightSec > 0) setExprManualRight(String(Math.round(exprRightSec / 60)));
+                if (exprActiveSide !== null) { commitExprSegment(exprActiveSide); setExprActiveSide(null); }
+                if (!exprManualLeft && exprLeftAccumRef.current > 0)  setExprManualLeft(String(Math.round(exprLeftAccumRef.current / 60)));
+                if (!exprManualRight && exprRightAccumRef.current > 0) setExprManualRight(String(Math.round(exprRightAccumRef.current / 60)));
                 setExprManualMode(true);
               }}
             >
@@ -1665,8 +1941,13 @@ export default function LogDialog({
             style={[s.primarySolid, { backgroundColor: TEAL_500, paddingVertical: 15 }]}
             onPress={() => {
               if (exprManualMode) {
-                setExprLeftSec((parseInt(exprManualLeft) || 0) * 60);
-                setExprRightSec((parseInt(exprManualRight) || 0) * 60);
+                const l = (parseInt(exprManualLeft) || 0) * 60;
+                const r = (parseInt(exprManualRight) || 0) * 60;
+                exprLeftAccumRef.current = l; exprRightAccumRef.current = r;
+                setExprLeftSec(l); setExprRightSec(r);
+              } else {
+                // 稼働中セグメントを確定してから停止（最後の数秒を取りこぼさない）。
+                commitExprSegment(exprActiveSide);
               }
               setExprActiveSide(null);
               setExprStep('amount');
@@ -2186,22 +2467,15 @@ export default function LogDialog({
         <Text style={s.sectionLabel}>開始時刻</Text>
         {renderTimeEdit()}
         <View style={s.rowBetween}>
-          <Text style={s.sectionLabel}>終了時刻（任意・HH:MM）</Text>
+          <Text style={s.sectionLabel}>終了時刻（任意）</Text>
           {!!holdEndTime && (
             <TouchableOpacity onPress={() => setHoldEndTime('')}>
               <Text style={s.clearLink}>クリア</Text>
             </TouchableOpacity>
           )}
         </View>
-        <TextInput
-          style={s.input}
-          placeholder="HH:MM"
-          placeholderTextColor={GRAY_400}
-          value={holdEndTime}
-          onChangeText={setHoldEndTime}
-          keyboardType="numbers-and-punctuation"
-          maxLength={5}
-        />
+        {/* 開始時刻と同じ時計形式（ホイール）で選べるように（client 2026-10）。 */}
+        <ScrollTimePicker value={holdEndTime || nowHHMM()} onChange={setHoldEndTime} />
         {dur > 0 && <Text style={[s.infoBoxText, { color: VIOLET_500, fontWeight: '700', textAlign: 'center', marginTop: 4 }]}>{dur}分間</Text>}
         {renderAssignee()}
         <Text style={s.sectionLabel}>メモ（任意）</Text>
@@ -2224,22 +2498,16 @@ export default function LogDialog({
         <Text style={s.sectionLabel}>開始時刻</Text>
         {renderTimeEdit()}
         <View style={s.rowBetween}>
-          <Text style={s.sectionLabel}>終了時刻（任意・HH:MM）</Text>
+          <Text style={s.sectionLabel}>終了時刻（任意）</Text>
           {!!walkEndTime && (
             <TouchableOpacity onPress={() => setWalkEndTime('')}>
               <Text style={s.clearLink}>クリア</Text>
             </TouchableOpacity>
           )}
         </View>
-        <TextInput
-          style={s.input}
-          placeholder="HH:MM"
-          placeholderTextColor={GRAY_400}
-          value={walkEndTime}
-          onChangeText={setWalkEndTime}
-          keyboardType="numbers-and-punctuation"
-          maxLength={5}
-        />
+        {/* 開始時刻と同じ時計形式（ホイール）で選べるように（client 2026-10）。
+            任意項目なので、スクロールして選んで初めて walkEndTime がセットされる。 */}
+        <ScrollTimePicker value={walkEndTime || nowHHMM()} onChange={setWalkEndTime} />
         {dur > 0 && <Text style={[s.infoBoxText, { color: GREEN_600, fontWeight: '700', textAlign: 'center', marginTop: 4 }]}>{dur}分間</Text>}
         {renderAssignee()}
         <Text style={s.sectionLabel}>メモ（任意）</Text>
@@ -2285,7 +2553,8 @@ export default function LogDialog({
       thank_you:   { label: 'パートナーへのメッセージ', ph: '例：今日もお疲れさま！', multiline: true },
       school:      { label: '先生からの連絡・お友達のこと', ph: '例：今日はお友達と仲良く遊べました', multiline: true },
       appointment: { label: '病院名・内容（任意）', ph: '例: 小児科・発熱で受診', multiline: true },
-      discipline:  { label: '理由メモ', ph: '例：お片付けできた！' },
+      // 'discipline' はここには来ない（専用ブランチで処理）。TEXT_TYPES からも
+      // 外してあるため、この表に戻さないこと。
       interest:    { label: '今ハマっていること', ph: '例：恐竜の図鑑、お絵かき' },
       schedule:    { label: '明日の準備・予定', ph: '例：遠足の準備、お弁当作る', multiline: true },
       school_prep: { label: '入学準備タスク', ph: '例：ランドセル選び、名前シール貼り', multiline: true },
@@ -2348,37 +2617,115 @@ export default function LogDialog({
     }
   })();
 
+  // 日付ピッカー（それ自体 Modal）を開く間は本体 Modal を隠す。Modal の中に Modal を
+  // 入れると閉じる時に固まる既知の不具合があるため、ピッカーは本体 Modal の外（兄弟）に
+  // 置き、同時に2つ表示しないようにする（client 2026-10: 通院などで固まる）。
+  const datePickerOpen = showManualDatePicker || showLogDatePicker || showWakeEditDatePicker;
+
+  // ── 「記録する」を1回で確定させる ────────────────────────────────────────
+  // メモ入力中（キーボードが出ている状態）の1回目のタップが、ボタンではなく
+  // キーボードを閉じる操作に使われてしまい、記録されない。Android では Modal の
+  // キーボード制御がネイティブのウィンドウ側で行われるため、ScrollView の
+  // keyboardShouldPersistTaps="handled" が効かず、タップがボタンまで届かない
+  // （KeyboardAvoidingView が Modal 内で効かないのと同じ理由）。
+  //
+  // そこでキーボードが出ている間だけ、指を離した時（onPress）ではなく
+  // 触れた時（onPressIn）で確定する。押し込み開始は確実に拾えるため、
+  // その後キーボードが閉じてレイアウトが動いても影響を受けない。
+  // キーボードが無いときは通常どおり onPress（誤爆を防ぐ）。
+  // client 2026-10: 散歩・通院・おやつ等で2回押す必要がある（4回目の報告）。
+  const keyboardOpen = kbHeight > 0;
+  const submitSave = () => {
+    // onTouchStart / onPressIn / onPress の多重発火、連打による二重保存を防ぐ。
+    if (savedRef.current) return;
+    savedRef.current = true;
+    // 記録と同時にキーボードも閉じる（client 2026-10 要望）。入力欄は
+    // handleSave → onSave でダイアログごと閉じる。
+    Keyboard.dismiss();
+    handleSave();
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={s.overlay}>
-        <View style={[s.sheet, isDark && { backgroundColor: colors.card }]}>
-          <View style={s.handle} />
-          <View style={s.titleRow}>
-            <TitleIcon size={22} color={isDark ? colors.primary : palette.primary} strokeWidth={2.5} />
-            <Text style={[s.title, isDark && { color: colors.text }]}>{titleText}</Text>
-          </View>
+    <>
+      <Modal visible={visible && !datePickerOpen} transparent animationType="slide" onRequestClose={requestClose}>
+        {/* キーボード分だけ下に余白を入れてシートを持ち上げる（Modal 内では
+            KeyboardAvoidingView が効かないため自前で対応。client 2026-10）。 */}
+        <View style={[s.overlay, kbHeight > 0 && { paddingBottom: kbHeight }]}>
+          {/* 背景（上の空白部分）タップで閉じる */}
+          <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} />
+          <View style={[s.sheet, isDark && { backgroundColor: colors.card }]}>
+            {/* バーのタップ / 下スワイプで閉じる（スクロール領域には付与しない） */}
+            <View {...closePan.panHandlers}>
+              <View style={s.handle} />
+              <View style={s.titleRow}>
+                <TitleIcon size={22} color={isDark ? colors.primary : palette.primary} strokeWidth={2.5} />
+                <Text style={[s.title, isDark && { color: colors.text }]}>{titleText}</Text>
+              </View>
+            </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            {body}
-            <View style={{ height: 8 }} />
-          </ScrollView>
+            {/* ボタンも ScrollView 内に置く（keyboardShouldPersistTaps="handled"）。
+                外側に置くと、メモ入力中にキーボードが出ている状態で記録を押すと、
+                1回目はキーボードを閉じるだけで記録されず2回押す必要があった
+                （client 2026-10: メモ欄入力時に2回記録を押す必要がある）。
 
-          <View style={s.btnRow}>
-            <TouchableOpacity style={s.cancelBtn} onPress={onClose}>
-              <Text style={s.cancelText}>キャンセル</Text>
-            </TouchableOpacity>
-            {!hideSaveButton && (
-              <TouchableOpacity
-                style={[s.saveBtn, { backgroundColor: saveColor }, !canSave && s.saveBtnDisabled]}
-                onPress={canSave ? handleSave : undefined}
-                disabled={!canSave}
-              >
-                <Text style={s.saveText}>記録する</Text>
-              </TouchableOpacity>
-            )}
+                keyboardDismissMode は "none"。"on-drag" だと、タップ時のわずかな
+                指の動きがドラッグ扱いになってキーボードが閉じ、その瞬間に
+                paddingBottom が 0 に戻ってシートが下がる。ボタンが指の下から
+                移動するので TouchableOpacity が押下をキャンセルし、結局
+                2回押す必要が残っていた（client 2026-10 再報告）。 */}
+            <ScrollView
+              style={{ flexShrink: 1 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="none"
+            >
+              {body}
+              <View style={{ height: 8 }} />
+              {/* pressRetentionOffset を大きく取る理由:
+                  メモ入力中（キーボードが出ている状態）に「記録する」を押すと、
+                  キーボードが閉じた瞬間にシートが数百px下へ動く。Android では
+                  Modal のウィンドウ自体がキーボードに合わせてリサイズされるため、
+                  overlay の paddingBottom を遅らせてもこの移動は防ぎきれない。
+                  ボタンが指の下から移動すると TouchableOpacity は「範囲外で離した」
+                  と判断して押下をキャンセルし、1回目が無反応＝2回押す必要が出る。
+                  retention を広げておけば、ボタンが移動しても押下が維持される
+                  （client 2026-10: メモ欄入力時に2回押す必要がある／再報告）。 */}
+              <View style={s.btnRow}>
+                <TouchableOpacity
+                  style={s.cancelBtn}
+                  onPress={requestClose}
+                  pressRetentionOffset={PRESS_RETENTION}
+                >
+                  <Text style={s.cancelText}>キャンセル</Text>
+                </TouchableOpacity>
+                {!hideSaveButton && (
+                  // onPressIn はタッチの取り合い（responder 争奪）に勝って初めて
+                  // 呼ばれるため、キーボードを閉じる処理にタッチを取られると発火
+                  // しない。View の onTouchStart は取り合いの前段で生の指タッチと
+                  // して流れてくるので、その場合でも拾える。TouchableOpacity は
+                  // onTouchStart を型で受け付けないため、View で包んで付ける。
+                  // 多重発火は submitSave 側の savedRef で防ぐ。
+                  <View
+                    style={s.saveBtnWrap}
+                    onTouchStart={keyboardOpen && canSave ? submitSave : undefined}
+                  >
+                    <TouchableOpacity
+                      style={[s.saveBtn, { backgroundColor: saveColor }, !canSave && s.saveBtnDisabled]}
+                      // キーボードが出ている間は onPressIn（触れた時点）で確定する。
+                      onPressIn={keyboardOpen && canSave ? submitSave : undefined}
+                      onPress={!keyboardOpen && canSave ? submitSave : undefined}
+                      disabled={!canSave}
+                      pressRetentionOffset={PRESS_RETENTION}
+                    >
+                      <Text style={s.saveText}>記録する</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </ScrollView>
           </View>
         </View>
-      </View>
+      </Modal>
 
       <DatePickerModal
         visible={showManualDatePicker}
@@ -2397,7 +2744,16 @@ export default function LogDialog({
         onClose={() => setShowLogDatePicker(false)}
         title="記録の日付を選ぶ"
       />
-    </Modal>
+
+      <DatePickerModal
+        visible={showWakeEditDatePicker}
+        initialDate={wakeEditDate}
+        maxDate={new Date()}
+        onConfirm={(iso) => setWakeEditDate(iso)}
+        onClose={() => setShowWakeEditDatePicker(false)}
+        title="ねんねの日付を選ぶ"
+      />
+    </>
   );
 }
 
@@ -2421,6 +2777,12 @@ const s = StyleSheet.create({
   section: { marginTop: 4, gap: 8 },
   sectionLabel: { fontFamily: fonts.bodyBold, fontSize: 12, fontWeight: '700', color: GRAY_500, marginTop: 4 },
   labelWithIcon: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  // 入眠時刻・起床時刻の見出し行（左寄せ）。アイコンと文字の中心を縦に揃える
+  // （alignItems:center + timeLabelText で文字の marginTop を打ち消す）。
+  // client 2026-10-08: 画面中央寄せではなく「アイコンと文字の中心を合わせる」のが要望。
+  timeLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  // sectionLabel の marginTop:4 を打ち消し、アイコンと文字の中心をぴったり合わせる。
+  timeLabelText: { marginTop: 0 },
 
   row: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
@@ -2659,9 +3021,11 @@ const s = StyleSheet.create({
   tempUnit: { fontFamily: fonts.sans, fontSize: 28, fontWeight: '900', marginBottom: 8, marginLeft: 4 },
   tempPill: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: radius.full },
   tempPillText: { fontFamily: fonts.bodyBold, fontSize: 12, fontWeight: '700' },
-  tempControls: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
-  tempStepBtn: { width: 48, height: 48, borderRadius: radius.md, borderWidth: 2, borderColor: palette.border, backgroundColor: palette.card, alignItems: 'center', justifyContent: 'center' },
-  tempPresetRow: { flexDirection: 'row', gap: 6 },
+  // 横幅いっぱいに広げ、−/＋ を両端に固定、プリセットは中央で等間隔に。固定幅の行だと
+  // 狭い端末で −/＋ ボタンの外側が画面端で切れていた（client 2026-10）。
+  tempControls: { flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'space-between', marginTop: 4 },
+  tempStepBtn: { width: 44, height: 44, borderRadius: radius.md, borderWidth: 2, borderColor: palette.border, backgroundColor: palette.card, alignItems: 'center', justifyContent: 'center' },
+  tempPresetRow: { flexDirection: 'row', flex: 1, justifyContent: 'space-around', alignItems: 'center', marginHorizontal: 4 },
   tempPresetDot: { width: 36, height: 36, borderRadius: radius.full, borderWidth: 2, borderColor: GRAY_200, backgroundColor: palette.card, alignItems: 'center', justifyContent: 'center' },
   tempPresetDotOn: { backgroundColor: palette.primary, borderColor: palette.primary },
   tempPresetText: { fontFamily: fonts.bodyBold, fontSize: 10, fontWeight: '700', color: GRAY_500 },
@@ -2684,6 +3048,8 @@ const s = StyleSheet.create({
   btnRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
   cancelBtn: { flex: 1, backgroundColor: palette.muted, borderRadius: 6, paddingVertical: 16, alignItems: 'center' },
   cancelText: { fontFamily: fonts.bodyBold, color: GRAY_500, fontSize: 15, fontWeight: '700' },
+  // 生タッチを拾うためのラッパー。レイアウトは saveBtn の flex:1 を引き継ぐ。
+  saveBtnWrap: { flex: 1 },
   saveBtn: { flex: 1, backgroundColor: palette.primary, borderRadius: 6, paddingVertical: 16, alignItems: 'center', ...shadows.soft, shadowOpacity: 0.18 },
   saveBtnDisabled: { backgroundColor: '#C3B8DC', opacity: 0.7, ...shadows.none },
   saveText: { fontFamily: fonts.bodyBold, color: palette.primaryForeground, fontSize: 17, fontWeight: '900' },

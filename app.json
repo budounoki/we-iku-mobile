@@ -5,7 +5,10 @@
     "scheme": "weyu",
     "version": "1.1.0",
     "orientation": "portrait",
-    "platforms": ["ios", "android"],
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -37,7 +40,7 @@
         "backgroundColor": "#7C5CBF"
       },
       "package": "com.weyuapp.app",
-      "versionCode": 3,
+      "versionCode": 4,
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
@@ -61,7 +64,8 @@
           "androidAppId": "ca-app-pub-4413290155368727~1921694519",
           "iosAppId": "ca-app-pub-4413290155368727~2106009844"
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "eas": {

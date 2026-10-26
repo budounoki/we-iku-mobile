@@ -595,22 +595,35 @@ export default function ReviewScreen() {
     [monthLogs, monthEvents],
   );
 
-  const handlePdfPress = () => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') {
-      Alert.alert('思い出PDF', 'PDFの書き出しはウェブ版でご利用ください。');
-      return;
-    }
+  const handlePdfPress = async () => {
     const child = useChildStore.getState().activeChild();
     const html  = buildPdfHtml(logs, child);
-    const w = window.open('', '_blank');
-    if (!w) {
-      window.alert('ポップアップがブロックされました。ポップアップを許可してください。');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const w = window.open('', '_blank');
+      if (!w) {
+        window.alert('ポップアップがブロックされました。ポップアップを許可してください。');
+        return;
+      }
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      setTimeout(() => w.print(), 400);
       return;
     }
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 400);
+    // アプリ: expo-print で PDF を生成し、共有シートで保存・送信・印刷できる。
+    // ネイティブモジュールは遅延 require（未搭載の旧ビルドでもクラッシュせず失敗扱い）。
+    try {
+      const Print = require('expo-print');
+      const Sharing = require('expo-sharing');
+      const { uri } = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: '思い出PDF', UTI: 'com.adobe.pdf' });
+      } else {
+        Alert.alert('PDFを作成しました', uri);
+      }
+    } catch {
+      Alert.alert('エラー', 'PDFの書き出しに失敗しました。アプリを最新版に更新してからお試しください。');
+    }
   };
 
   return (

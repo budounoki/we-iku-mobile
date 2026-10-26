@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import {
   View,
   ScrollView,
@@ -135,6 +136,7 @@ async function saveHiddenSet(familyId: string, childId: number, set: Set<string>
 
 export default function FoodTrackerScreen() {
   const { isDark, colors } = useTheme();
+  const kbHeight = useKeyboardHeight();
   const { user } = useAuthStore();
   const { activeChildId } = useChildStore();
   const activeChild = useChildStore((s) => s.activeChild());
@@ -569,7 +571,7 @@ export default function FoodTrackerScreen() {
         animationType="slide"
         onRequestClose={closeSheet}
       >
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={closeSheet}>
+        <TouchableOpacity style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]} activeOpacity={1} onPress={closeSheet}>
           <TouchableOpacity style={[styles.sheetContainer, isDark && { backgroundColor: colors.card }]} activeOpacity={1}>
             <View style={styles.sheetHandle} />
             <Title style={styles.sheetTitle}>{sheetItem?.name}</Title>
@@ -694,7 +696,7 @@ export default function FoodTrackerScreen() {
         onRequestClose={() => setContextTarget(null)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}
           activeOpacity={1}
           onPress={() => setContextTarget(null)}
         >
@@ -769,7 +771,7 @@ export default function FoodTrackerScreen() {
         onRequestClose={() => setConfirmHide(null)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}
           activeOpacity={1}
           onPress={() => setConfirmHide(null)}
         >
@@ -804,7 +806,7 @@ export default function FoodTrackerScreen() {
         onRequestClose={() => setShowAddModal(false)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}
           activeOpacity={1}
           onPress={() => setShowAddModal(false)}
         >
@@ -859,7 +861,7 @@ export default function FoodTrackerScreen() {
         onRequestClose={() => setEditCustomOpen(false)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}
           activeOpacity={1}
           onPress={() => setEditCustomOpen(false)}
         >
@@ -913,7 +915,7 @@ export default function FoodTrackerScreen() {
         onRequestClose={() => setConfirmDeleteCustom(null)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}
           activeOpacity={1}
           onPress={() => setConfirmDeleteCustom(null)}
         >

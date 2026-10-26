@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import {
   View,
   Text,
@@ -50,7 +51,7 @@ import { useVaccineReminderSync } from '../hooks/useVaccineReminderSync';
 import { logRecordedToast } from '../utils/logToast';
 import { getChildren } from '../api/children';
 import {
-  getActiveSleepSession, startSleepSession, endSleepSession, manualSleepEntry,
+  getActiveSleepSession, startSleepSession, endSleepSession, manualSleepEntry, updateSleepTime,
   type SleepSession,
 } from '../api/sleepSessions';
 import type { RootStackParamList } from '../navigation';
@@ -73,6 +74,7 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import WeBoard from '../components/WeBoard';
+import CampaignBanner from '../components/CampaignBanner';
 import WeHeader from '../components/WeHeader';
 import LogDialog, { type LogSaveData } from '../components/LogDialog';
 import { useTheme } from '../contexts/ThemeContext';
@@ -584,6 +586,25 @@ export default function HomeScreen() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const { isDark, colors } = useTheme();
+  const kbHeight = useKeyboardHeight();
+  // WeBoard の入力欄がキーボードに隠れないようスクロールさせるための参照。
+  const homeScrollRef = useRef<ScrollView>(null);
+  // 現在のスクロール位置。隠れている量だけ追加でスクロールするのに使う。
+  const homeScrollY = useRef(0);
+  // Weボード入力欄がキーボードに隠れている実測量。WeBoard から通知される。
+  // 高さの推測（ウィンドウが縮んだか等）は広告バナーの読み込みでも変わってしまい
+  // 当てにならなかったため、実測値だけで余白とスクロール量を決める。
+  const [weBoardOverlap, setWeBoardOverlap] = useState(0);
+
+  // 隠れている量が分かったら、余白が入った次の描画でその分だけスクロールする。
+  useEffect(() => {
+    if (weBoardOverlap <= 0) return;
+    const t = setTimeout(
+      () => homeScrollRef.current?.scrollTo({ y: homeScrollY.current + weBoardOverlap + 24, animated: true }),
+      60,
+    );
+    return () => clearTimeout(t);
+  }, [weBoardOverlap]);
   const [refreshing, setRefreshing] = useState(false);
   const { width: windowWidth } = useWindowDimensions();
   const GRID_W = Math.min(windowWidth, GRID_MAX);
@@ -757,6 +778,9 @@ export default function HomeScreen() {
   const childAgeMonths = birthdayStr ? differenceInMonths(new Date(), parseISO(birthdayStr)) : 0;
   const childAgeYears = Math.floor(childAgeMonths / 12);
   const childAgeRemMonths = childAgeMonths % 12;
+  // 泣き止みレスキューは0歳児（12ヶ月未満）のみ表示。1歳以上、または生年月日が
+  // 未登録／読み込み中（birthdayStr なし）の場合は非表示（クライアント要望 2026-10）。
+  const rescueVisible = !!birthdayStr && childAgeMonths < 12;
   const ageDisplay = childAgeMonths < 12
     ? `${childAgeMonths}ヶ月`
     : childAgeRemMonths === 0
@@ -1079,6 +1103,31 @@ export default function HomeScreen() {
     }
   };
 
+  // ねんね中「時刻を修正」: 入眠時刻を訂正し、起床時刻が渡されればそのまま終了する。
+  // 入眠訂正は /update-time、終了＆タイムラインのログ生成は /end（起床時刻を渡すと
+  // 正しい継続時間でログが作られる）に分ける。押し忘れても後から正しい起床時刻で
+  // 記録できる（client 2026-10-08）。
+  const handleCorrectSleepTime = async (
+    sessionId: number,
+    data: { startedAt: string; endedAt?: string; settlingMethod?: string; settlingMinutes?: number; sleepLocation?: string },
+  ) => {
+    try {
+      const { startedAt, endedAt, ...settling } = data;
+      await updateSleepTime(sessionId, { startedAt }); // 入眠時刻を訂正（継続中のまま）
+      if (endedAt) {
+        // 起床時刻を確定して終了 → サーバーが完了ログを入眠時刻位置で作成する。
+        await endSleepSession(sessionId, { endedAt, ...settling });
+        setActiveSleepSession(null);
+      } else {
+        const refreshed = await getActiveSleepSession(familyId);
+        setActiveSleepSession(refreshed);
+      }
+      queryClient.invalidateQueries({ queryKey: ['logs', familyId] });
+    } catch {
+      showAlert('時刻の修正に失敗しました。');
+    }
+  };
+
   const handleManualSleep = async (data: { durationMin: number; startedAt: string; settlingMethod?: string; settlingMinutes?: number; sleepLocation?: string }) => {
     if (!activeChildId) return;
     try {
@@ -1170,11 +1219,22 @@ export default function HomeScreen() {
 
   return (
     <ScrollView
+      ref={homeScrollRef}
       style={[styles.container, isDark && { backgroundColor: colors.background }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      keyboardShouldPersistTaps="handled"
+      onScroll={(e) => { homeScrollY.current = e.nativeEvent.contentOffset.y; }}
+      scrollEventThrottle={16}
+      // 余白は多めで良い。狙った位置までスクロールするだけで末尾までは送らないため、
+      // この余白はキーボードの裏に隠れて見えない。足りないとスクロールが頭打ちに
+      // なって入力欄が少し隠れたままになる（client 2026-10）。
+      contentContainerStyle={weBoardOverlap > 0 ? { paddingBottom: weBoardOverlap + 64 } : undefined}
     >
       {/* 1. Header (web-parity component) */}
       <WeHeader />
+
+      {/* キャンペーン（期間中・対象者のみ。判定はサーバー） */}
+      <CampaignBanner />
 
       {/* Child selector */}
       {(childrenData ?? []).length > 1 && (
@@ -1740,22 +1800,25 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* 10. 泣き止みレスキュー SOS — mirrors web SosButton.tsx (→ rescue) */}
-      <View style={styles.sosWrap}>
-        <TouchableOpacity
-          activeOpacity={0.9}
-          style={styles.sosCircle}
-          onPress={() => navigation.navigate('Alarm')}
-        >
-          <View style={styles.sosInner}>
-            <Bell size={40} color="#FFFFFF" strokeWidth={2} />
-          </View>
-          <Text style={styles.sosTitle}>泣き止み{'\n'}レスキュー</Text>
-          <View style={styles.sosBadge}>
-            <Text style={styles.sosBadgeText}>🚨 SOS</Text>
-          </View>
-        </TouchableOpacity>
-      </View>
+      {/* 10. 泣き止みレスキュー SOS — 0歳児（12ヶ月未満）のみ表示。
+          1歳以上・生年月日未登録／読み込み中は非表示（クライアント要望 2026-10）。 */}
+      {rescueVisible && (
+        <View style={styles.sosWrap}>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={styles.sosCircle}
+            onPress={() => navigation.navigate('Alarm')}
+          >
+            <View style={styles.sosInner}>
+              <Bell size={40} color="#FFFFFF" strokeWidth={2} />
+            </View>
+            <Text style={styles.sosTitle}>泣き止み{'\n'}レスキュー</Text>
+            <View style={styles.sosBadge}>
+              <Text style={styles.sosBadgeText}>🚨 SOS</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* 11. Feature cards — web Home.tsx:707-776. Each card uses WeYu's exact
           per-shade Tailwind values: card bg -50, badge -100, icon -600,
@@ -1808,7 +1871,15 @@ export default function HomeScreen() {
       ))}
 
       {/* 12. WeBoard */}
-      {familyId && userId && <WeBoard familyId={familyId} userId={userId} />}
+      {familyId && userId && (
+        <WeBoard
+          familyId={familyId}
+          userId={userId}
+          // 入力欄がキーボードに隠れている実測量を受け取り、その分だけ
+          // 余白を足してスクロールする。
+          onOverlapChange={setWeBoardOverlap}
+        />
+      )}
 
       {/* Bottom-tab clearance — was 100 (created a visible empty band under
           WeBoard); 24 is enough for the 64px tab bar since content already
@@ -1825,11 +1896,12 @@ export default function HomeScreen() {
         onSave={handleLogSave}
         onEndSleepSession={handleEndSleepSession}
         onManualSleep={handleManualSleep}
+        onCorrectSleepTime={handleCorrectSleepTime}
       />
 
       {/* ── Custom button add modal ───────────────────────────────────────────── */}
       <Modal visible={showCustomModal} transparent animationType="slide" onRequestClose={closeCustomModal}>
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}>
           <View style={[styles.modalSheet, isDark && { backgroundColor: colors.card }]}>
             <View style={styles.sheetHandle} />
             <View style={styles.modalHeaderRow}>

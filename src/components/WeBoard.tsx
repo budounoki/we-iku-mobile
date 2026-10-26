@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   TextInput,
@@ -16,6 +16,7 @@ import { apiGet, apiPost } from '../api/client';
 import { palette, fonts, radius, shadows } from '../theme/tokens';
 import { Text } from '../theme/ui';
 import { useTheme } from '../contexts/ThemeContext';
+import { useKeyboardTop } from '../hooks/useKeyboardHeight';
 
 interface WeBoardMessage {
   id: number;
@@ -28,6 +29,21 @@ interface WeBoardMessage {
 interface WeBoardProps {
   familyId: string;
   userId: string;
+  /**
+   * 入力欄にフォーカスしたときに呼ばれる。WeBoard は親画面（ホーム）の
+   * ScrollView の中にあるため、ここの KeyboardAvoidingView では持ち上げられない
+   * （Android では behavior=undefined で何もしない）。代わりに親側で入力欄が
+   * キーボードに隠れない位置までスクロールしてもらう
+   * （client 2026-10: キーボードが入力欄を隠す）。
+   */
+  onInputFocus?: () => void;
+  /** 入力欄からフォーカスが外れたとき（親側のスクロール追従を止める）。 */
+  onInputBlur?: () => void;
+  /**
+   * 入力欄がキーボードに隠れている量(px)。0 なら隠れていない。
+   * 親画面はこの分だけ下に余白を足し、同じ分スクロールすれば入力欄が出る。
+   */
+  onOverlapChange?: (overlap: number) => void;
 }
 
 // Exact preset set from WeYu/client/src/components/WeBoard.tsx (QUICK_MESSAGES)
@@ -63,7 +79,31 @@ function formatTime(iso: string): string {
   return `${M}/${D} ${hh}:${mm}`;
 }
 
-export default function WeBoard({ familyId, userId }: WeBoardProps) {
+export default function WeBoard({ familyId, userId, onInputFocus, onInputBlur, onOverlapChange }: WeBoardProps) {
+  const inputRowRef = useRef<View>(null);
+  const keyboardTop = useKeyboardTop();
+  const [inputFocused, setInputFocused] = useState(false);
+
+  // 入力欄の実際の位置とキーボード上端を比べて、隠れている量を親に伝える。
+  // 高さの推測ではなく実測なので、ウィンドウがリサイズされる端末でも
+  // されない端末でも同じように動く（client 2026-10 の空白／隠れる往復対策）。
+  useEffect(() => {
+    if (!inputFocused || keyboardTop <= 0) {
+      onOverlapChange?.(0);
+      return;
+    }
+    const timer = setTimeout(() => {
+      inputRowRef.current?.measureInWindow((_x, y, _w, h) => {
+        // +28: Android の予測変換バー等は endCoordinates.screenY に含まれず、
+        // 実際のキーボード上端はもう少し上にあるため余裕を持たせる
+        // （client 2026-10: あと10pxほど隠れる）。
+        const overlap = y + h + 28 - keyboardTop;
+        onOverlapChange?.(overlap > 0 ? Math.ceil(overlap) : 0);
+      });
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [inputFocused, keyboardTop, onOverlapChange]);
+
   const { isDark, colors } = useTheme();
   const [inputText, setInputText] = useState('');
   // Web parity (WeBoard.tsx:26): collapsed shows the 3 most recent,
@@ -232,7 +272,7 @@ export default function WeBoard({ familyId, userId }: WeBoardProps) {
           </ScrollView>
 
           {/* Input row */}
-          <View style={styles.inputRow}>
+          <View style={styles.inputRow} ref={inputRowRef}>
             <TextInput
               style={[styles.textInput, isDark && { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
               placeholder="メッセージを入力..."
@@ -242,6 +282,9 @@ export default function WeBoard({ familyId, userId }: WeBoardProps) {
               multiline={false}
               returnKeyType="send"
               onSubmitEditing={() => handleSend()}
+              // キーボードが出てから位置が確定するので少し待ってスクロールする。
+              onFocus={() => { setInputFocused(true); onInputFocus?.(); }}
+              onBlur={() => { setInputFocused(false); onInputBlur?.(); }}
             />
             <TouchableOpacity
               style={[styles.sendButton, (!inputText.trim() || sendMutation.isPending) && styles.sendButtonDisabled]}

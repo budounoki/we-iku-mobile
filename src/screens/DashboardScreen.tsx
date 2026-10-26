@@ -33,6 +33,7 @@
  *     same predicate: keep logs with no childId or matching the active child.
  */
 import React, { useState, useMemo, useCallback } from 'react';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import {
   View,
   ScrollView,
@@ -239,6 +240,7 @@ function donutSlice(
 
 export default function DashboardScreen(): React.ReactElement {
   const { isDark, colors } = useTheme();
+  const kbHeight = useKeyboardHeight();
   const user = useAuthStore((s) => s.user);
   const familyId = user?.familyId ?? '';
   const userRole: Performer = user?.role ?? 'papa';
@@ -848,7 +850,7 @@ export default function DashboardScreen(): React.ReactElement {
         transparent
         onRequestClose={() => setChoreDialogOpen(false)}
       >
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}>
           <View style={[styles.modalSheet, isDark && { backgroundColor: colors.card }]}>
             <View style={styles.modalHeaderRow}>
               <View style={{ flex: 1 }}>
@@ -945,7 +947,7 @@ export default function DashboardScreen(): React.ReactElement {
         transparent
         onRequestClose={() => setAddCustomDialogOpen(false)}
       >
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}>
           <View style={[styles.modalSheet, isDark && { backgroundColor: colors.card }]}>
             <View style={styles.modalHeaderRow}>
               <View style={{ flex: 1 }}>

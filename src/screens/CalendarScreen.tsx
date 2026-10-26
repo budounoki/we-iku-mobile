@@ -19,6 +19,7 @@
  * events API (icon/color round-trip), AsyncStorage-free state, navigation.
  */
 import React, { useState, useMemo, useCallback } from 'react';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import {
   View,
   ScrollView,
@@ -47,7 +48,7 @@ import {
 import { palette, fonts, radius, shadows } from '../theme/tokens';
 import { Text, Title } from '../theme/ui';
 import { useTheme } from '../contexts/ThemeContext';
-import { LogIcon, getLogVisual } from '../theme/logIcons';
+import { LogIcon, getLogVisual, resolveSleepVisual } from '../theme/logIcons';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -165,6 +166,7 @@ export default function CalendarScreen() {
   const userId      = String(user?.id ?? '');
   const queryClient = useQueryClient();
   const { isDark, colors } = useTheme();
+  const kbHeight = useKeyboardHeight();
 
   const today = useMemo(() => new Date(), []);
 
@@ -521,12 +523,16 @@ export default function CalendarScreen() {
             );
           }
           const log = item.log!;
-          const vis = getLogVisual(LOG_VISUAL_KEY[log.type] ?? log.type);
+          // 睡眠は昼寝/夜で色分け（他画面と統一）。それ以外は従来のマッピング。
+          const vkey = log.type === 'sleep'
+            ? resolveSleepVisual('sleep', log.createdAt)
+            : (LOG_VISUAL_KEY[log.type] ?? log.type);
+          const vis = getLogVisual(vkey);
           return (
             <View key={item.key} style={[st.row, divider && st.rowDivider]}>
               <Text style={st.rowTime}>{item.timeStr}</Text>
               <View style={[st.rowIconBox, { backgroundColor: vis.soft }]}>
-                <LogIcon type={LOG_VISUAL_KEY[log.type] ?? log.type} size={14} strokeWidth={2} />
+                <LogIcon type={vkey} size={14} strokeWidth={2} />
               </View>
               <View style={st.rowBody}>
                 <Text style={st.rowTitle} numberOfLines={1}>
@@ -599,7 +605,7 @@ export default function CalendarScreen() {
 
       {/* ── Add event sheet (web: bottom sheet, single scroll) ──────────── */}
       <Modal visible={showAddModal} transparent animationType="slide" onRequestClose={() => setShowAddModal(false)}>
-        <View style={st.modalOverlay}>
+        <View style={[st.modalOverlay, kbHeight > 0 && { paddingBottom: kbHeight }]}>
           <View style={[st.modalSheet, isDark && { backgroundColor: colors.card }]}>
             <View style={st.sheetHandle} />
             <View style={st.modalHeader}>

@@ -16,7 +16,7 @@ import {
   Pill, Thermometer, Heart, UtensilsCrossed, Droplets, MessageCircle,
   ThumbsUp, Award, GraduationCap, Stethoscope, CalendarCheck, Scissors,
   Hand, GlassWater, Palette, Timer, Pencil, ClipboardList, NotebookPen,
-  Footprints,
+  Footprints, Sun,
 } from 'lucide-react-native';
 
 type IconCmp = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
@@ -55,7 +55,9 @@ const MAP: Record<string, V> = {
   school_prep:   { icon: GraduationCap,   tint: '#2563EB', soft: '#EFF6FF', bord: '#DBEAFE' }, // blue-600
   school_report: { icon: School,          tint: '#0284C7', soft: '#F0F9FF', bord: '#E0F2FE' }, // sky-600
   skincare:      { icon: Hand,            tint: '#FB7185', soft: '#FFF1F2', bord: '#FFE4E6' }, // rose-400
-  sleep:         { icon: Moon,            tint: '#6366F1', soft: '#EEF2FF', bord: '#E0E7FF' }, // indigo-500
+  sleep:         { icon: Moon,            tint: '#6366F1', soft: '#EEF2FF', bord: '#E0E7FF' }, // indigo-500 (既定)
+  sleep_nap:     { icon: Sun,             tint: '#F59E0B', soft: '#FFF7ED', bord: '#FFEDD5' }, // 昼寝: 太陽・薄オレンジ (amber-500/orange-50/orange-100)
+  sleep_night:   { icon: Moon,            tint: '#8B5CF6', soft: '#F5F3FF', bord: '#EDE9FE' }, // 夜の睡眠: 月・紫 (violet-500/violet-50/violet-100)
   snack:         { icon: Cookie,          tint: '#EC4899', soft: '#FDF2F8', bord: '#FCE7F3' }, // pink-500
   temperature:   { icon: Thermometer,     tint: '#F87171', soft: '#FEF2F2', bord: '#FEE2E2' }, // red-400
   thanks:        { icon: Heart,           tint: '#EF4444', soft: '#FEF2F2', bord: '#FEE2E2' }, // red-500
@@ -82,6 +84,20 @@ const FALLBACK: V = { icon: Pencil, tint: '#7F738C', soft: '#F5F3F6', bord: '#E8
 
 export function getLogVisual(type: string): V {
   return MAP[type] ?? FALLBACK;
+}
+
+/**
+ * 睡眠は開始時刻で 昼寝(sleep_nap: 太陽・薄オレンジ) / 夜(sleep_night: 月・紫) に
+ * 振り分ける。6:00–17:59 開始＝昼寝、それ以外＝夜。sleep 以外の type はそのまま返す。
+ * タイムライン・カレンダー・記録詳細など、睡眠ログを色分け表示する全箇所で使う
+ * （client 2026-10: 色分けが一部画面でしか出ていなかった）。
+ */
+export function resolveSleepVisual(type: string, createdAt: string | number | Date): string {
+  if (type === 'sleep') {
+    const h = new Date(createdAt).getHours();
+    return h >= 6 && h < 18 ? 'sleep_nap' : 'sleep_night';
+  }
+  return type;
 }
 
 export function LogIcon({

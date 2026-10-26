@@ -89,7 +89,9 @@ export function calcTeamPower(params: {
   const birth = new Date(birthday);
   const now   = new Date();
   const days  = Math.max(1, Math.floor((now.getTime() - birth.getTime()) / 86_400_000));
-  return Math.round(((totalEarned + thankYouCount * 5) / days) * 10) / 10;
+  // web版と同じく整数で算出（originwebapp Home.tsx: Math.round(... / daysOld)）。
+  // 以前は ×10/10 で小数1桁になり「0.0」と表示されていた（client 2026-10-08）。
+  return Math.round((totalEarned + thankYouCount * 5) / days);
 }
 
 // ─── Point-rate table (for display in ポイントのしくみ screen) ─────────────────

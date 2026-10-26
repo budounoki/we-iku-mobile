@@ -52,6 +52,7 @@ import { Text, Title } from '../theme/ui';
 import { LogIcon, getLogVisual } from '../theme/logIcons';
 import WeHeader from '../components/WeHeader';
 import LogDialog, { type LogSaveData } from '../components/LogDialog';
+import { manualSleepEntry, startSleepSession } from '../api/sleepSessions';
 import ScrollTimePicker from '../components/ScrollTimePicker';
 import {
   PHASE_BUTTONS, PHASE_LABELS, getPhaseIndex, HIDDEN_BY_DEFAULT,
@@ -99,6 +100,15 @@ function logVisual(type: string) {
 }
 function logVisualType(type: string) {
   return TYPE_TO_VISUAL[type] ?? type;
+}
+// 睡眠は開始時刻で 昼寝(sleep_nap: 太陽・薄オレンジ) / 夜(sleep_night: 月・紫) を
+// 出し分ける。昼寝=6:00〜18:00 開始、それ以外=夜（クライアント要望 2026-10）。
+function resolveVisualType(log: { type: string; createdAt: string | number | Date }): string {
+  if (log.type === 'sleep') {
+    const h = new Date(log.createdAt).getHours();
+    return h >= 6 && h < 18 ? 'sleep_nap' : 'sleep_night';
+  }
+  return logVisualType(log.type);
 }
 function logLabel(type: string) {
   return TYPE_LABEL[type] ?? type;
@@ -583,7 +593,7 @@ function EditLogDialog({ log, onClose, onSaved }: EditLogDialogProps) {
 
   if (!log) return null;
 
-  const vis = logVisual(log.type);
+  const vis = getLogVisual(resolveVisualType(log));
   const label = logLabel(log.type);
   const detail = logDetailText(log);
 
@@ -639,7 +649,7 @@ function EditLogDialog({ log, onClose, onSaved }: EditLogDialogProps) {
 
           {/* Web: info pill — bg-*-50 border-*-100 rounded-2xl */}
           <View style={[ed.infoPill, { backgroundColor: vis.soft, borderColor: vis.bord }]}>
-            <LogIcon type={logVisualType(log.type)} size={18} strokeWidth={2} />
+            <LogIcon type={resolveVisualType(log)} size={18} strokeWidth={2} />
             <View style={{ flex: 1 }}>
               <Text style={ed.infoLabel}>{label}</Text>
               {detail ? <Text style={ed.infoDetail}>{detail}</Text> : null}
@@ -744,6 +754,10 @@ function SleepBlock({ log, carryOverMin, onPress }: { log: Log; carryOverMin?: n
   // this, the next-day morning portion simply never appeared
   // (client-reported 2026-09-21: 9/4〜9/5の夜間睡眠がきろくに出ない).
   const start = new Date(log.createdAt);
+  // 昼寝(sleep_nap: 太陽・薄オレンジ) / 夜(sleep_night: 月・紫) で色分けする。
+  // 以前はアイコン・背景が紫固定で、昼寝でも月が出ていた（client 2026-10）。
+  const visType = resolveVisualType(log);
+  const vis = getLogVisual(visType);
   const parts = (log.memo ?? '').split('\n')[0].split('・').filter(Boolean);
   const durMin = sleepLogDurationMin(log);
   const isCarry = carryOverMin != null;
@@ -767,12 +781,12 @@ function SleepBlock({ log, carryOverMin, onPress }: { log: Log; carryOverMin?: n
     <TouchableOpacity
       activeOpacity={0.8}
       onPress={onPress}
-      style={[tl.sleepBlock, { top, height }]}
+      style={[tl.sleepBlock, { top, height, backgroundColor: vis.soft, borderColor: vis.bord }]}
     >
       <View style={tl.sleepInner}>
         <View style={tl.sleepHeadRow}>
-          <Moon size={14} color="#A78BC9" strokeWidth={2} />
-          <Text style={tl.sleepTitle}>
+          <LogIcon type={visType} size={14} strokeWidth={2} />
+          <Text style={[tl.sleepTitle, { color: vis.tint }]}>
             ねんね{isCarry ? '（続き）' : ''}{durMin > 0 ? ` ${formatDuration(durMin)}` : ''}
           </Text>
         </View>
@@ -1263,6 +1277,30 @@ export default function TimelineScreen() {
     });
   }, [activeChildId, familyId, userId, partnerUserId, createLogMutation]);
 
+  // ねんね「時刻を指定して記録」— これまで Timeline（きろく）タブの LogDialog に
+  // onManualSleep が渡されておらず、手入力の睡眠が無反応で消えていた（タイムラインに
+  // 反映されない：クライアント報告 2026-10）。Home と同じ処理をここでも配線する。
+  const handleManualSleep = async (data: { durationMin: number; startedAt: string; settlingMethod?: string; settlingMinutes?: number; sleepLocation?: string }) => {
+    if (!activeChildId) { showAlert('子どもを選択してください'); return; }
+    try {
+      if (data.durationMin === 0) {
+        // 「まだ起きていない」= 指定時刻からのねんね開始
+        await startSleepSession({
+          familyId, createdBy: userId, childId: activeChildId,
+          startedAt: data.startedAt,
+          settlingMethod: data.settlingMethod,
+          settlingMinutes: data.settlingMinutes,
+          sleepLocation: data.sleepLocation,
+        });
+      } else {
+        await manualSleepEntry({ familyId, createdBy: userId, childId: activeChildId, ...data });
+      }
+      queryClient.invalidateQueries({ queryKey: ['logs', familyId] });
+    } catch {
+      showAlert('睡眠記録の保存に失敗しました。');
+    }
+  };
+
   // Custom buttons create a `custom` log immediately (same as HomeScreen's
   // handleCustomButtonPress) — reuses the createLog path already wired here.
   const handleCustomButtonPress = useCallback((btn: { label: string }) => {
@@ -1562,7 +1600,7 @@ export default function TimelineScreen() {
                   const layout = logLayout.get(log.id) ?? { top: minutesToTopPx(min) - LOG_ENTRY_HEIGHT / 2, col: 0, cols: 1 };
                   const colW = layout.cols > 1 ? 100 / layout.cols : 100;
                   const colL = layout.col * colW;
-                  const vis = logVisual(log.type);
+                  const vis = getLogVisual(resolveVisualType(log));
                   const label = logLabel(log.type);
                   const detail = logDetailText(log);
                   const isFever = log.type === 'temperature' && (log.bodyTemperature ?? 0) >= 38.5;
@@ -1650,7 +1688,7 @@ export default function TimelineScreen() {
                                   isFever && tl.logCardFever,
                                   isDragging && { transform: [{ scale: 1.05 }], shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
                                 ]}>
-                                  <LogIcon type={logVisualType(log.type)} size={15} strokeWidth={2} />
+                                  <LogIcon type={resolveVisualType(log)} size={15} strokeWidth={2} />
                                   <View style={tl.logBody}>
                                     <Text numberOfLines={1} style={[tl.logTitle, { color: textPri }]}>
                                       {detail || label}
@@ -1920,6 +1958,7 @@ export default function TimelineScreen() {
         userRole={user?.role}
         onClose={() => setQuickAddType(null)}
         onSave={handleQuickAddSave}
+        onManualSleep={handleManualSleep}
       />
     </View>
   );

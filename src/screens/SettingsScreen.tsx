@@ -50,6 +50,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -216,6 +217,7 @@ function confirmAction(title: string, message: string, onConfirm: () => void) {
 export default function SettingsScreen() {
   const { isDark, colors } = useTheme();
   const navigation = useNavigation<Nav>();
+  const insets = useSafeAreaInsets();
   const { user, setUser, logout: storeLogout } = useAuthStore();
   const { children, activeChildId, setChildren, setActiveChildId } = useChildStore();
   const queryClient = useQueryClient();
@@ -723,8 +725,9 @@ export default function SettingsScreen() {
     { Icon: Utensils,        label: '食品トラッカー',         onPress: () => navigation.navigate('FoodTracker') },
     { Icon: Download,        label: 'ぴよログからデータ移行',  onPress: () => navigation.navigate('Import') },
     { Icon: Mic,             label: '音声アシスタント連携',   onPress: () => navigation.navigate('Shortcuts') },
-    { Icon: MessagesSquare,  label: 'コミュニティ',           onPress: () => navigation.navigate('Community') },
-    { Icon: HelpCircle,      label: 'よくある質問',           onPress: () => navigation.navigate('FAQ') },
+    // 施設などのサポーターに記録を期間限定で共有する（Web の /supporter/manage 相当）。
+    { Icon: Users,           label: 'サポーター管理',         onPress: () => (navigation as any).navigate('SupporterManage') },
+    { Icon: HelpCircle,      label: '使い方ガイド',           onPress: () => (navigation as any).navigate('Guide') },
   ];
 
   // ─── Render ───────────────────────────────────────────────────────────────────
@@ -732,11 +735,18 @@ export default function SettingsScreen() {
     <Screen contentStyle={styles.content}>
 
       {/* ── Header (web Settings.tsx:1213-1222) ──
-          web: flex items-center gap-4 mb-8 — ghost back button + text-2xl font-black */}
-      <View style={styles.headerRow}>
+          web: flex items-center gap-4 mb-8 — ghost back button + text-2xl font-black
+          client 2026-10: 「←アプリ設定」が上に寄りすぎ → セーフエリア + 余白分だけ下げる */}
+      <View style={[styles.headerRow, { marginTop: insets.top + 8 }]}>
         <TouchableOpacity
           style={styles.headerBackBtn}
-          onPress={() => navigation.goBack()}
+          // 設定はタブ画面で goBack() が効かない（client 2026-10）。ホームタブへ直接切替。
+          onPress={() => {
+            const nav = navigation as any;
+            try { if (nav.canGoBack && nav.canGoBack()) { nav.goBack(); return; } } catch {}
+            try { nav.navigate('Home'); return; } catch {}
+            nav.navigate('Main', { screen: 'Home' });
+          }}
           accessibilityRole="button"
           accessibilityLabel="戻る"
         >
@@ -754,7 +764,7 @@ export default function SettingsScreen() {
       {isFirstSetup && (
         <View style={styles.firstSetupBox}>
           <Text style={styles.firstSetupText}>
-            ようこそ、ぶどうの木へ。まずはお子様のお名前とお誕生日をお聞かせくださいませ。このアプリの大切な主役でございます。
+            ようこそ、We育へ。まずはお子様のお名前とお誕生日をお聞かせくださいませ。このアプリの大切な主役でございます。
           </Text>
         </View>
       )}
@@ -1444,9 +1454,8 @@ export default function SettingsScreen() {
           )}
 
           {/* ── 15. 使い方ヒント (web: /tips link → Tips.tsx) ──
-              Routes to the dedicated TipsScreen (faithful port of
-              WeYu/client/src/pages/Tips.tsx). Route registered by the
-              navigator after this screen; cast keeps Settings tsc-clean. */}
+              client 2026-10: 使い方ガイドは「よくある質問」の枠へ移動。ここは元の
+              使い方ヒントに戻す。 */}
           <TouchableOpacity
             style={styles.linkCard}
             onPress={() => (navigation as any).navigate('Tips')}

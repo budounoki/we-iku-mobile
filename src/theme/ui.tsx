@@ -72,16 +72,20 @@ export function Screen({
   scroll = true,
   contentStyle,
   style,
+  scrollRef,
 }: {
   children: React.ReactNode;
   scroll?: boolean;
   contentStyle?: StyleProp<ViewStyle>;
   style?: StyleProp<ViewStyle>;
+  /** 画面側から scrollTo したいとき用（例: 入力エラーを画面上部まで戻す）。 */
+  scrollRef?: React.RefObject<ScrollView | null>;
 }) {
   const { colors } = useTheme();
   if (scroll) {
     return (
       <ScrollView
+        ref={scrollRef}
         style={[styles.screen, { backgroundColor: colors.background }, style]}
         contentContainerStyle={[styles.screenContent, contentStyle]}
         showsVerticalScrollIndicator={false}
