@@ -43,10 +43,34 @@ export async function apiRequest(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${res.status}: ${text}`);
+    throw new Error(errorMessageFrom(res.status, res.statusText, text));
   }
 
   return res;
+}
+
+/**
+ * エラー応答から利用者に見せる文言だけを取り出す。
+ *
+ * サーバーは {"message":"..."} を返すため、本文をそのまま Error.message に
+ * 入れると画面に `400: {"message":"..."}` と JSON がそのまま出てしまう
+ * （client 2026-10: エラー表示のスタイルがおかしい）。
+ */
+function errorMessageFrom(status: number, statusText: string, body: string): string {
+  const trimmed = body.trim();
+  if (trimmed && !trimmed.startsWith('<')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        const value = (parsed as Record<string, unknown>).message
+          ?? (parsed as Record<string, unknown>).error;
+        if (typeof value === 'string' && value.trim()) return value.trim();
+      }
+    } catch {
+      return trimmed;
+    }
+  }
+  return `${status}: ${statusText || 'エラーが発生しました'}`;
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
