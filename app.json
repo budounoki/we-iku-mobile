@@ -40,7 +40,7 @@
         "backgroundColor": "#7C5CBF"
       },
       "package": "com.weyuapp.app",
-      "versionCode": 4,
+      "versionCode": 5,
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
@@ -65,7 +65,15 @@
           "iosAppId": "ca-app-pub-4413290155368727~2106009844"
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "毎日の1枚カレンダーに残す写真を選ぶために使用します",
+          "cameraPermission": "毎日の1枚カレンダーの写真を撮るために使用します",
+          "microphonePermission": false
+        }
+      ]
     ],
     "extra": {
       "eas": {

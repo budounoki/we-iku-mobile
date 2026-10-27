@@ -3,7 +3,7 @@
     "name": "We育",
     "slug": "weyu",
     "scheme": "weyu",
-    "version": "3.1",
+    "version": "3.2",
     "orientation": "portrait",
     "platforms": [
       "ios"
@@ -24,7 +24,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.weyuapp3.app",
-      "buildNumber": "37",
+      "buildNumber": "38",
       "infoPlist": {
         "NSCameraUsageDescription": "写真の記録に使用します",
         "NSPhotoLibraryUsageDescription": "写真の選択に使用します",
@@ -62,7 +62,15 @@
           "iosAppId": "ca-app-pub-4413290155368727~2106009844"
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "毎日の1枚カレンダーに残す写真を選ぶために使用します",
+          "cameraPermission": "毎日の1枚カレンダーの写真を撮るために使用します",
+          "microphonePermission": false
+        }
+      ]
     ],
     "extra": {
       "eas": {

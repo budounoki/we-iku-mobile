@@ -39,6 +39,8 @@ import {
 } from 'lucide-react-native';
 import { useAuthStore } from '../store/authStore';
 import { useChildStore } from '../store/childStore';
+import { useNavigation } from '@react-navigation/native';
+import { fetchPhotoContext } from '../api/photoCalendar';
 import WeHeader from '../components/WeHeader';
 import { getLogs } from '../api/logs';
 import {
@@ -159,6 +161,15 @@ function showConfirm(msg: string, onOk: () => void) {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function CalendarScreen() {
+  const nav = useNavigation<any>();
+  // 毎日の1枚カレンダーへの入口。使える状態（本番テーブル適用済み・閲覧できる
+  // お子さまがいる）のときだけ出す。判定はサーバー（未適用の間は「準備中」を返す）。
+  const { data: photoAvailable = false } = useQuery({
+    queryKey: ['photo-calendar-available'],
+    queryFn: async () => ((await fetchPhotoContext()).children?.length ?? 0) > 0,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
   const { user }    = useAuthStore();
   const { activeChild } = useChildStore();
   const child       = activeChild();
@@ -567,6 +578,16 @@ export default function CalendarScreen() {
         {/* ── Header (web-parity component, same as Home) ───────────────── */}
         <WeHeader />
 
+        {/* ── 「予定・記録」/「写真」切り替え（Web の PhotoTabs と同じ） ── */}
+        {photoAvailable && (
+          <View style={st.photoTabs}>
+            <View style={[st.photoTab, st.photoTabOn]}><Text style={[st.photoTabText, st.photoTabTextOn]}>予定・記録</Text></View>
+            <TouchableOpacity style={st.photoTab} onPress={() => nav.navigate('PhotoCalendar')} activeOpacity={0.7}>
+              <Text style={st.photoTabText}>写真</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* ── Month / week nav — web: ghost chevrons + centred toggle title ── */}
         <View style={st.navRow}>
           <TouchableOpacity style={st.navBtn} onPress={navigatePrev} activeOpacity={0.7}>
@@ -746,6 +767,12 @@ export default function CalendarScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const st = StyleSheet.create({
+  // 「予定・記録」/「写真」切り替え
+  photoTabs: { flexDirection: 'row', marginHorizontal: 16, marginTop: 8, backgroundColor: '#F3EEF8', borderRadius: 12, padding: 3 },
+  photoTab: { flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center' },
+  photoTabOn: { backgroundColor: '#fff' },
+  photoTabText: { fontSize: 14, fontWeight: '700', color: palette.mutedForeground },
+  photoTabTextOn: { color: '#7b4f9e' },
   // Web: gradient from-purple-50 via-white to-green-50
   container: { flex: 1, backgroundColor: palette.background },
 

@@ -30,6 +30,8 @@ import SkillTreeScreen from '../screens/SkillTreeScreen';
 import FAQScreen from '../screens/FAQScreen';
 import GuideScreen from '../screens/GuideScreen';
 import SupporterManageScreen from '../screens/SupporterManageScreen';
+import PhotoCalendarScreen from '../screens/PhotoCalendarScreen';
+import PhotoDayScreen from '../screens/PhotoDayScreen';
 import DailyStatsScreen from '../screens/DailyStatsScreen';
 import TipsScreen from '../screens/TipsScreen';
 import LegalScreen from '../screens/LegalScreen';
@@ -54,6 +56,8 @@ export type RootStackParamList = {
   FAQ: undefined;
   Guide: undefined;
   SupporterManage: undefined;
+  PhotoCalendar: { babyId?: number; month?: string } | undefined;
+  PhotoDay: { babyId: number; date: string };
   DailyStats: undefined;
   Tips: undefined;
   Legal: undefined;
@@ -202,6 +206,16 @@ export default function AppNavigator() {
               name="SupporterManage"
               component={SupporterManageScreen}
               options={{ headerShown: true, title: 'サポーター管理' }}
+            />
+            <Stack.Screen
+              name="PhotoCalendar"
+              component={PhotoCalendarScreen}
+              options={{ headerShown: true, title: '写真カレンダー' }}
+            />
+            <Stack.Screen
+              name="PhotoDay"
+              component={PhotoDayScreen}
+              options={{ headerShown: true, title: 'この日の写真' }}
             />
           </>
         )}
