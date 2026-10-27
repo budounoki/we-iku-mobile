@@ -29,8 +29,8 @@
       "bundleIdentifier": "com.weyuapp.app",
       "buildNumber": "1",
       "infoPlist": {
-        "NSCameraUsageDescription": "写真の記録に使用します",
-        "NSPhotoLibraryUsageDescription": "写真の選択に使用します",
+        "NSCameraUsageDescription": "毎日の1枚カレンダーに残す写真を撮影するために使用します",
+        "NSPhotoLibraryUsageDescription": "毎日の1枚カレンダーに残す写真をカメラロールから選ぶために使用します",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
