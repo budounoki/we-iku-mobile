@@ -39,7 +39,7 @@ import {
 } from 'lucide-react-native';
 import { useAuthStore } from '../store/authStore';
 import { useChildStore } from '../store/childStore';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { fetchPhotoContext } from '../api/photoCalendar';
 import WeHeader from '../components/WeHeader';
 import { getLogs } from '../api/logs';
@@ -164,12 +164,19 @@ export default function CalendarScreen() {
   const nav = useNavigation<any>();
   // 毎日の1枚カレンダーへの入口。使える状態（本番テーブル適用済み・閲覧できる
   // お子さまがいる）のときだけ出す。判定はサーバー（未適用の間は「準備中」を返す）。
-  const { data: photoAvailable = false } = useQuery({
+  const { data: photoAvailable = false, refetch: refetchPhotoAvailable } = useQuery({
     queryKey: ['photo-calendar-available'],
     queryFn: async () => ((await fetchPhotoContext()).children?.length ?? 0) > 0,
     retry: false,
     staleTime: 5 * 60 * 1000,
   });
+  // タブ画面は開いたまま残るため、まだ使えない判定のときはタブを開くたびに確認し直す
+  // （赤ちゃんを登録した直後や、一時的な通信エラーの後にアプリ再起動なしで出るように）。
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!photoAvailable) void refetchPhotoAvailable();
+    }, [photoAvailable, refetchPhotoAvailable]),
+  );
   const { user }    = useAuthStore();
   const { activeChild } = useChildStore();
   const child       = activeChild();
