@@ -39,8 +39,7 @@ import {
 } from 'lucide-react-native';
 import { useAuthStore } from '../store/authStore';
 import { useChildStore } from '../store/childStore';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { fetchPhotoContext } from '../api/photoCalendar';
+import { useNavigation } from '@react-navigation/native';
 import WeHeader from '../components/WeHeader';
 import { getLogs } from '../api/logs';
 import {
@@ -162,21 +161,6 @@ function showConfirm(msg: string, onOk: () => void) {
 
 export default function CalendarScreen() {
   const nav = useNavigation<any>();
-  // 毎日の1枚カレンダーへの入口。使える状態（本番テーブル適用済み・閲覧できる
-  // お子さまがいる）のときだけ出す。判定はサーバー（未適用の間は「準備中」を返す）。
-  const { data: photoAvailable = false, refetch: refetchPhotoAvailable } = useQuery({
-    queryKey: ['photo-calendar-available'],
-    queryFn: async () => ((await fetchPhotoContext()).children?.length ?? 0) > 0,
-    retry: false,
-    staleTime: 5 * 60 * 1000,
-  });
-  // タブ画面は開いたまま残るため、まだ使えない判定のときはタブを開くたびに確認し直す
-  // （赤ちゃんを登録した直後や、一時的な通信エラーの後にアプリ再起動なしで出るように）。
-  useFocusEffect(
-    React.useCallback(() => {
-      if (!photoAvailable) void refetchPhotoAvailable();
-    }, [photoAvailable, refetchPhotoAvailable]),
-  );
   const { user }    = useAuthStore();
   const { activeChild } = useChildStore();
   const child       = activeChild();
@@ -585,15 +569,16 @@ export default function CalendarScreen() {
         {/* ── Header (web-parity component, same as Home) ───────────────── */}
         <WeHeader />
 
-        {/* ── 「予定・記録」/「写真」切り替え（Web の PhotoTabs と同じ） ── */}
-        {photoAvailable && (
-          <View style={st.photoTabs}>
-            <View style={[st.photoTab, st.photoTabOn]}><Text style={[st.photoTabText, st.photoTabTextOn]}>予定・記録</Text></View>
-            <TouchableOpacity style={st.photoTab} onPress={() => nav.navigate('PhotoCalendar')} activeOpacity={0.7}>
-              <Text style={st.photoTabText}>写真</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {/* ── 「予定・記録」/「写真」切り替え（Web の PhotoTabs と同じ） ──
+             常に出す。以前は「写真を見られるお子さまがいるか」をサーバーに確認してから
+             出していたが、新規登録直後（赤ちゃん登録前）の判定が残ってタブが出ない
+             ことがあった。お子さま未登録などの案内は写真カレンダー画面側で出す。 */}
+        <View style={st.photoTabs}>
+          <View style={[st.photoTab, st.photoTabOn]}><Text style={[st.photoTabText, st.photoTabTextOn]}>予定・記録</Text></View>
+          <TouchableOpacity style={st.photoTab} onPress={() => nav.navigate('PhotoCalendar')} activeOpacity={0.7}>
+            <Text style={st.photoTabText}>写真</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* ── Month / week nav — web: ghost chevrons + centred toggle title ── */}
         <View style={st.navRow}>
