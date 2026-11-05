@@ -18,6 +18,7 @@ import { useAuthStore } from '../store/authStore';
 import { loginWithGoogle, loginWithApple, getLineLoginUrl } from '../api/auth';
 import { getBaseUrl } from '../api/client';
 import { syncSharedData } from '../utils/sharedData';
+import { carryGuestFamily, forgetGuestFamily } from '../lib/guest-upgrade';
 import type { RootStackParamList } from '../navigation';
 import { palette, fonts, radius, shadows } from '../theme/tokens';
 import { Button, Text, Title, Muted } from '../theme/ui';
@@ -105,6 +106,15 @@ export default function LoginScreen() {
       ['displayName', user.displayName ?? ''],
       ['pictureUrl', user.pictureUrl ?? ''],
     ]);
+    // ゲストからの切り替えなら、ゲストの家族（赤ちゃん・記録）を引き継ぐ。
+    const carried = await carryGuestFamily(String(user.familyId));
+    if (carried) {
+      user = { ...user, familyId: carried.familyId, role: carried.role ?? user.role };
+      await AsyncStorage.multiSet([
+        ['familyId', carried.familyId],
+        ['userRole', user.role ?? 'papa'],
+      ]);
+    }
     setUser({
       id: user.id,
       lineUserId: '',
@@ -264,7 +274,11 @@ export default function LoginScreen() {
   };
 
   // ── Guest ──────────────────────────────────────────────────────────────────
-  const handleGuestLogin = () => navigation.navigate('Onboarding');
+  const handleGuestLogin = () => {
+    // ゲストを選び直したら、前のゲストからの引き継ぎ予定は取り消す。
+    void forgetGuestFamily();
+    navigation.navigate('Onboarding');
+  };
 
   return (
     <View style={[styles.container, isDark && { backgroundColor: colors.background }]}>

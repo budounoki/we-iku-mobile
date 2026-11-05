@@ -5,14 +5,16 @@
  * その日の画面へ。誕生日より前の日は押せない。はじめての記念日には印を付ける。
  * 表示できるか・誰が編集できるかはすべてサーバー（/api/photo-calendar/*）が判定する。
  */
-import React, { useMemo, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, useWindowDimensions, Alert } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Camera, ChevronLeft, ChevronRight, Star } from 'lucide-react-native';
 import { Text, Muted } from '../theme/ui';
 import { palette, radius } from '../theme/tokens';
 import { useChildStore } from '../store/childStore';
+import { useAuthStore } from '../store/authStore';
+import { isGuestSession, rememberGuestFamily } from '../lib/guest-upgrade';
 import AuthPhoto from '../components/AuthPhoto';
 import { useAddPhoto } from '../hooks/useAddPhoto';
 import { fetchPhotoContext, fetchPhotoMonth, jstToday } from '../api/photoCalendar';
@@ -38,7 +40,38 @@ export default function PhotoCalendarScreen() {
   const [month, setMonth] = useState<string>(route.params?.month || today.slice(0, 7));
   const [pickedChildId, setPickedChildId] = useState<number | null>(route.params?.babyId ?? null);
 
-  const context = useQuery({ queryKey: ['photo-context'], queryFn: fetchPhotoContext, retry: false, staleTime: 30_000 });
+  const { user, logout } = useAuthStore();
+  const queryClient = useQueryClient();
+  // ゲスト（アカウント無し）は本人確認ができないため写真カレンダーを使えない。ログインを案内する。
+  const [guest, setGuest] = useState<boolean | null>(null);
+  useEffect(() => { void isGuestSession().then(setGuest); }, []);
+
+  const context = useQuery({
+    queryKey: ['photo-context'],
+    queryFn: fetchPhotoContext,
+    retry: false,
+    staleTime: 30_000,
+    enabled: guest === false,
+  });
+
+  const startLogin = () => {
+    Alert.alert(
+      'ログインして写真カレンダーを使う',
+      'LINE・Google・Appleのいずれかでログインしてください。いまの赤ちゃんの情報や記録は、そのまま引き継がれます。',
+      [
+        { text: 'キャンセル', style: 'cancel' },
+        {
+          text: 'ログインへ進む',
+          onPress: async () => {
+            if (user?.familyId) await rememberGuestFamily(user.familyId, user.role);
+            await logout();
+            useChildStore.getState().setChildren([]);
+            queryClient.clear();
+          },
+        },
+      ],
+    );
+  };
   const children = context.data?.children ?? [];
   const child =
     children.find((c) => c.id === pickedChildId) ||
@@ -62,7 +95,22 @@ export default function PhotoCalendarScreen() {
 
   const openDay = (date: string) => navigation.navigate('PhotoDay', { babyId: child!.id, date });
 
-  if (context.isLoading) {
+  if (guest) {
+    return (
+      <View style={s.center}>
+        <Camera size={30} color={ACCENT} />
+        <Text style={[s.emptyTitle, { marginTop: 10 }]}>写真カレンダーはログインして使えます</Text>
+        <Muted style={s.emptyText}>
+          大切な写真を家族だけで安全に残すため、LINE・Google・Appleのアカウントでのログインが必要です。{'\n'}
+          いまの赤ちゃんの情報や記録は、そのまま引き継がれます。
+        </Muted>
+        <TouchableOpacity style={[s.primary, { alignSelf: 'stretch', marginTop: 18 }]} onPress={startLogin}>
+          <Text style={s.primaryText}>ログインして使う</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  if (guest === null || context.isLoading) {
     return <View style={s.center}><ActivityIndicator color={palette.primary} /></View>;
   }
   if (context.error || !child) {
@@ -73,6 +121,12 @@ export default function PhotoCalendarScreen() {
         <Muted style={s.emptyText}>
           {!child && !context.error ? 'プロフィールを登録すると、写真を残せます。' : msg || '時間をおいてもう一度お試しください。'}
         </Muted>
+        {/* ログインの有効期限切れ（古いログイン情報）のときは、ログインし直してもらう。 */}
+        {msg.includes('ログイン') && (
+          <TouchableOpacity style={[s.primary, { alignSelf: 'stretch', marginTop: 18 }]} onPress={startLogin}>
+            <Text style={s.primaryText}>ログインし直す</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   }
