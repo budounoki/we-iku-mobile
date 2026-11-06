@@ -62,6 +62,7 @@ import { useChildStore } from '../store/childStore';
 import { apiGet, apiPost, apiRequest } from '../api/client';
 import { palette, fonts, radius, shadows } from '../theme/tokens';
 import { Screen, Card, Badge, Text, Title, Muted } from '../theme/ui';
+import { usePhotoSettling } from '../hooks/usePhotoSettling';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -853,6 +854,8 @@ function CryingTimer({
   const [isSaving, setIsSaving] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const observeRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 寝かしつけ中（泣きのタイマー・見守り）は写真のおしらせを止める。
+  usePhotoSettling(isRunning || isObserving);
 
   useEffect(() => {
     if (isRunning) {

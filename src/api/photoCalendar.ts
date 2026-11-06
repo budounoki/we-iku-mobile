@@ -76,3 +76,21 @@ export async function photoImageSource(photoId: string, size: 'thumb' | 'full') 
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   };
 }
+
+/* ── 写真のおしらせ（12〜20時のどこかで1日1回・音なし） ── */
+export type PhotoReminderSettings = { available: boolean; enabled: boolean };
+export function fetchPhotoReminderSettings(): Promise<PhotoReminderSettings> {
+  return apiGet<PhotoReminderSettings>('/api/photo-notification-settings');
+}
+export async function savePhotoReminderSettings(enabled: boolean): Promise<PhotoReminderSettings> {
+  const res = await apiRequest('PUT', '/api/photo-notification-settings', { enabled });
+  return res.json();
+}
+/** 寝かしつけ中（ネントレのタイマー作動中）の申告。作動中は写真のおしらせを送らない。 */
+export async function reportSettling(settling: boolean): Promise<void> {
+  await apiRequest('POST', '/api/photo-notifications/activity', { settling });
+}
+/** 通知を開いたことの記録。 */
+export async function markPhotoReminderOpened(notificationId: string): Promise<void> {
+  await apiRequest('POST', `/api/photo-notifications/${notificationId}/opened`);
+}

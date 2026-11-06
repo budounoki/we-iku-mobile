@@ -19,14 +19,16 @@ import { scheduleNextFeedingAlarm } from './src/utils/alarmManager';
 import { ThemeProvider } from './src/contexts/ThemeContext';
 import { ToastProvider } from './src/components/Toast';
 import FamilyIdMigrationBanner from './src/components/FamilyIdMigrationBanner';
+import { ensurePhotoQuietChannel, handlePhotoReminderResponse, isPhotoReminder } from './src/lib/photo-reminder';
 
 // Configure how push notifications are displayed when the app is in the foreground.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
+  handleNotification: async (notification) => ({
     shouldShowAlert: true,
     shouldShowBanner: true,
     shouldShowList: true,
-    shouldPlaySound: true,
+    // 写真のおしらせは常に音なし。他の通知はこれまでどおり。
+    shouldPlaySound: !isPhotoReminder(notification.request.content.data),
     shouldSetBadge: false,
   }),
 });
@@ -198,9 +200,14 @@ function AppContent() {
     });
 
     // Listen for user tapping on a push notification.
-    responseListener.current = Notifications.addNotificationResponseReceivedListener((_response) => {
-      // Could navigate to a specific screen here if needed.
+    responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
+      void handlePhotoReminderResponse(response);
     });
+    // アプリが閉じた状態から通知タップで起動した場合。
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => { if (response) void handlePhotoReminderResponse(response); })
+      .catch(() => {});
+    void ensurePhotoQuietChannel();
 
     return () => {
       sub.remove();

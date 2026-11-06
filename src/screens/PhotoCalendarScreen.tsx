@@ -6,10 +6,10 @@
  * 表示できるか・誰が編集できるかはすべてサーバー（/api/photo-calendar/*）が判定する。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, useWindowDimensions, Alert } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, useWindowDimensions, Alert, Switch } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Camera, ChevronLeft, ChevronRight, Star } from 'lucide-react-native';
+import { Bell, Camera, ChevronLeft, ChevronRight, Star } from 'lucide-react-native';
 import { Text, Muted } from '../theme/ui';
 import { palette, radius } from '../theme/tokens';
 import { useChildStore } from '../store/childStore';
@@ -17,7 +17,8 @@ import { useAuthStore } from '../store/authStore';
 import { isGuestSession, rememberGuestFamily } from '../lib/guest-upgrade';
 import AuthPhoto from '../components/AuthPhoto';
 import { useAddPhoto } from '../hooks/useAddPhoto';
-import { fetchPhotoContext, fetchPhotoMonth, jstToday } from '../api/photoCalendar';
+import { fetchPhotoContext, fetchPhotoMonth, fetchPhotoReminderSettings, jstToday, savePhotoReminderSettings } from '../api/photoCalendar';
+import { ensurePushRegistered } from '../lib/photo-reminder';
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 const ACCENT = '#7b4f9e';
@@ -86,6 +87,30 @@ export default function PhotoCalendarScreen() {
     enabled: !!child,
     retry: false,
   });
+
+  // 写真のおしらせ（オン／オフのみ）。表が未適用の間（available=false）は出さない。
+  const reminder = useQuery({
+    queryKey: ['photo-reminder-settings'],
+    queryFn: fetchPhotoReminderSettings,
+    enabled: guest === false && !!child?.canEdit,
+    retry: false,
+  });
+  const [reminderSaving, setReminderSaving] = useState(false);
+  const toggleReminder = async (enabled: boolean) => {
+    setReminderSaving(true);
+    try {
+      if (enabled && !(await ensurePushRegistered())) {
+        Alert.alert('通知が許可されていません', '端末の「設定」アプリから、We育の通知を許可してください。');
+        return;
+      }
+      const saved = await savePhotoReminderSettings(enabled);
+      queryClient.setQueryData(['photo-reminder-settings'], saved);
+    } catch (e) {
+      Alert.alert('設定を保存できませんでした', e instanceof Error ? e.message : '時間をおいてもう一度お試しください。');
+    } finally {
+      setReminderSaving(false);
+    }
+  };
 
   const byDate = useMemo(() => new Map((monthQuery.data?.days ?? []).map((d) => [d.date, d])), [monthQuery.data]);
   const [y, m] = shownMonth.split('-').map(Number);
@@ -208,6 +233,22 @@ export default function PhotoCalendarScreen() {
         <Star size={16} color={ACCENT} />
         <Text style={s.secondaryText}>今日の写真を見る</Text>
       </TouchableOpacity>
+
+      {canEdit && reminder.data?.available && (
+        <View style={s.reminderCard}>
+          <Bell size={18} color={ACCENT} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.reminderTitle}>写真のおしらせ</Text>
+            <Muted style={s.reminderText}>12時〜20時のどこかで、1日1回お知らせします（音なし）</Muted>
+          </View>
+          <Switch
+            value={reminder.data.enabled}
+            disabled={reminderSaving}
+            onValueChange={(v) => void toggleReminder(v)}
+            trackColor={{ true: ACCENT }}
+          />
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -245,4 +286,7 @@ const s = StyleSheet.create({
   primaryText: { color: '#fff', fontSize: 16, fontWeight: '800' },
   secondary: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderRadius: 14, paddingVertical: 13, borderWidth: 1, borderColor: '#E8DDF2' },
   secondaryText: { color: ACCENT, fontSize: 15, fontWeight: '700' },
+  reminderCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#F0E6DA', marginTop: 6 },
+  reminderTitle: { fontSize: 15, fontWeight: '800', color: palette.foreground },
+  reminderText: { fontSize: 12, marginTop: 2, lineHeight: 17 },
 });
