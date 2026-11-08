@@ -99,8 +99,13 @@ export default function PhotoCalendarScreen() {
   const toggleReminder = async (enabled: boolean) => {
     setReminderSaving(true);
     try {
-      if (enabled && !(await ensurePushRegistered())) {
+      const push = enabled ? await ensurePushRegistered() : 'ok';
+      if (push === 'denied') {
         Alert.alert('通知が許可されていません', '端末の「設定」アプリから、We育の通知を許可してください。');
+        return;
+      }
+      if (push === 'unavailable') {
+        Alert.alert('通知を登録できませんでした', 'この端末ではまだお知らせを受け取れません。時間をおいてもう一度お試しください。');
         return;
       }
       const saved = await savePhotoReminderSettings(enabled);

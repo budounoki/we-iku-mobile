@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "254265686669",
+    "project_id": "we-iku-app-5d388",
+    "storage_bucket": "we-iku-app-5d388.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:254265686669:android:e22a5cc942829ef37c40c4",
+        "android_client_info": {
+          "package_name": "com.weyuapp.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAzlRDIYRxNQOO44_oz2AO50JoA7u1erZY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

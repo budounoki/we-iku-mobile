@@ -70,18 +70,24 @@ export function flushPendingPhotoReminder() {
 
 /**
  * OS の通知許可と端末登録（プッシュ通知トークンの送信）。通知をオンにするときに使う。
- * 許可されなかったら false。
+ * "denied" = 端末の設定で通知が許可されていない、"unavailable" = 許可はあるが
+ * この端末ではプッシュ通知の登録ができなかった（通信エラーやアプリ側の設定不足）。
  */
-export async function ensurePushRegistered(): Promise<boolean> {
-  if (Platform.OS === 'web') return false;
+export async function ensurePushRegistered(): Promise<'ok' | 'denied' | 'unavailable'> {
+  if (Platform.OS === 'web') return 'unavailable';
   try {
     let { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') status = (await Notifications.requestPermissionsAsync()).status;
-    if (status !== 'granted') return false;
-    const token = (await Notifications.getExpoPushTokenAsync()).data;
-    if (token) await apiPost('/api/auth/push-token', { token });
-    return true;
+    if (status !== 'granted') return 'denied';
   } catch {
-    return false;
+    return 'denied';
+  }
+  try {
+    const token = (await Notifications.getExpoPushTokenAsync()).data;
+    if (!token) return 'unavailable';
+    await apiPost('/api/auth/push-token', { token });
+    return 'ok';
+  } catch {
+    return 'unavailable';
   }
 }
