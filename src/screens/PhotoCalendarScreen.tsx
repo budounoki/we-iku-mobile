@@ -18,7 +18,7 @@ import { isGuestSession, rememberGuestFamily } from '../lib/guest-upgrade';
 import AuthPhoto from '../components/AuthPhoto';
 import { useAddPhoto } from '../hooks/useAddPhoto';
 import { fetchPhotoContext, fetchPhotoMonth, fetchPhotoReminderSettings, jstToday, savePhotoReminderSettings } from '../api/photoCalendar';
-import { ensurePushRegistered } from '../lib/photo-reminder';
+import { ensurePushRegistered, lastPushError } from '../lib/photo-reminder';
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 const ACCENT = '#7b4f9e';
@@ -105,7 +105,7 @@ export default function PhotoCalendarScreen() {
         return;
       }
       if (push === 'unavailable') {
-        Alert.alert('通知を登録できませんでした', 'この端末ではまだお知らせを受け取れません。時間をおいてもう一度お試しください。');
+        Alert.alert('通知を登録できませんでした', `この端末ではまだお知らせを受け取れません。時間をおいてもう一度お試しください。${lastPushError ? `\n（${lastPushError}）` : ''}`);
         return;
       }
       const saved = await savePhotoReminderSettings(enabled);

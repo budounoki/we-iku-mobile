@@ -73,7 +73,9 @@ export function flushPendingPhotoReminder() {
  * "denied" = 端末の設定で通知が許可されていない、"unavailable" = 許可はあるが
  * この端末ではプッシュ通知の登録ができなかった（通信エラーやアプリ側の設定不足）。
  */
+export let lastPushError = '';
 export async function ensurePushRegistered(): Promise<'ok' | 'denied' | 'unavailable'> {
+  lastPushError = '';
   if (Platform.OS === 'web') return 'unavailable';
   try {
     let { status } = await Notifications.getPermissionsAsync();
@@ -87,7 +89,8 @@ export async function ensurePushRegistered(): Promise<'ok' | 'denied' | 'unavail
     if (!token) return 'unavailable';
     await apiPost('/api/auth/push-token', { token });
     return 'ok';
-  } catch {
+  } catch (e) {
+    lastPushError = (e instanceof Error ? e.message : String(e)).slice(0, 160);
     return 'unavailable';
   }
 }
