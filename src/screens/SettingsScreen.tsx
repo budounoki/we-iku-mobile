@@ -107,6 +107,15 @@ import * as Updates from 'expo-updates';
 // the client's build (v1.0.0) and the premium test build (v1.1.0) — and which
 // over-the-air update each is running — can be verified at a glance.
 const APP_VERSION = Constants.expoConfig?.version ?? '?';
+// ストアのビルド番号（Android の versionCode / iOS の build）。バージョン名が同じでも区別できるように。
+const NATIVE_BUILD: string = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('expo-application').nativeBuildVersion ?? '?';
+  } catch {
+    return (Constants as any).nativeBuildVersion ?? '?';
+  }
+})();
 const OTA_LABEL = Updates.isEmbeddedLaunch
   ? '内蔵'
   : (Updates.updateId ? Updates.updateId.slice(0, 8) : '不明');
@@ -1504,7 +1513,7 @@ export default function SettingsScreen() {
 
       {/* ── 18. version footer (web: text-center pt-4 pb-8) ── */}
       <View style={styles.versionWrap}>
-        <Text style={styles.versionMain}>We育 v{APP_VERSION}（更新: {OTA_LABEL}）</Text>
+        <Text style={styles.versionMain}>We育 v{APP_VERSION}（{NATIVE_BUILD}）（更新: {OTA_LABEL}）</Text>
         <Muted style={styles.versionSub}>by 産前産後ケアホテル ぶどうの木</Muted>
       </View>
 
